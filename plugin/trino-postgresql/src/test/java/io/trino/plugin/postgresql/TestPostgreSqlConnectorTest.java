@@ -38,6 +38,7 @@ import io.trino.testing.sql.SqlExecutor;
 import io.trino.testing.sql.TestTable;
 import io.trino.testing.sql.TestView;
 import org.testng.annotations.BeforeClass;
+import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 
 import java.sql.Connection;
@@ -73,6 +74,7 @@ import static java.util.concurrent.TimeUnit.SECONDS;
 import static java.util.stream.Collectors.joining;
 import static java.util.stream.IntStream.range;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertTrue;
 
 public class TestPostgreSqlConnectorTest
@@ -157,6 +159,90 @@ public class TestPostgreSqlConnectorTest
                 onRemoteDatabase(),
                 "tpch.test_unsupported_column_present",
                 "(one bigint, two decimal(50,0), three varchar(10))");
+    }
+
+    @Test(dataProvider = "testTimestampPrecisionOnCreateTable")
+    public void testTimestampPrecisionOnCreateTable(String inputType, String expectedType)
+    {
+        try (TestTable testTable = new TestTable(
+                getQueryRunner()::execute,
+                "test_coercion_show_create_table",
+                format("(a %s)", inputType))) {
+            assertEquals(getColumnType(testTable.getName(), "a"), expectedType);
+        }
+    }
+
+    @DataProvider(name = "testTimestampPrecisionOnCreateTable")
+    public static Object[][] timestampPrecisionOnCreateTableProvider()
+    {
+        return new Object[][]{
+                {"timestamp(0)", "timestamp(0)"},
+                {"timestamp(1)", "timestamp(1)"},
+                {"timestamp(2)", "timestamp(2)"},
+                {"timestamp(3)", "timestamp(3)"},
+                {"timestamp(4)", "timestamp(4)"},
+                {"timestamp(5)", "timestamp(5)"},
+                {"timestamp(6)", "timestamp(6)"},
+                {"timestamp(7)", "timestamp(6)"},
+                {"timestamp(8)", "timestamp(6)"},
+                {"timestamp(9)", "timestamp(6)"},
+                {"timestamp(10)", "timestamp(6)"},
+                {"timestamp(11)", "timestamp(6)"},
+                {"timestamp(12)", "timestamp(6)"}
+        };
+    }
+
+    @Test(dataProvider = "testTimestampPrecisionOnCreateTableAsSelect")
+    public void testTimestampPrecisionOnCreateTableAsSelect(String inputType, String tableType)
+    {
+        try (TestTable testTable = new TestTable(
+                getQueryRunner()::execute,
+                "test_coercion_show_create_table",
+                format("AS SELECT %s a", inputType))) {
+            assertEquals(getColumnType(testTable.getName(), "a"), tableType);
+        }
+    }
+
+    @Test(dataProvider = "testTimestampPrecisionOnCreateTableAsSelect")
+    public void testTimestampPrecisionOnCreateTableAsSelectWithNoData(String inputType, String tableType)
+    {
+        try (TestTable testTable = new TestTable(
+                getQueryRunner()::execute,
+                "test_coercion_show_create_table",
+                format("AS SELECT %s a WITH NO DATA", inputType))) {
+            assertEquals(getColumnType(testTable.getName(), "a"), tableType);
+        }
+    }
+
+    @DataProvider(name = "testTimestampPrecisionOnCreateTableAsSelect")
+    public static Object[][] timestampPrecisionOnCreateTableAsSelectProvider()
+    {
+        return new Object[][] {
+                {"TIMESTAMP '1970-01-01 00:00:00'", "timestamp(0)"},
+                {"TIMESTAMP '1970-01-01 00:00:00.9'", "timestamp(1)"},
+                {"TIMESTAMP '1970-01-01 00:00:00.56'", "timestamp(2)"},
+                {"TIMESTAMP '1970-01-01 00:00:00.123'", "timestamp(3)"},
+                {"TIMESTAMP '1970-01-01 00:00:00.4896'", "timestamp(4)"},
+                {"TIMESTAMP '1970-01-01 00:00:00.89356'", "timestamp(5)"},
+                {"TIMESTAMP '1970-01-01 00:00:00.123000'", "timestamp(6)"},
+                {"TIMESTAMP '1970-01-01 00:00:00.999'", "timestamp(3)"},
+                {"TIMESTAMP '1970-01-01 00:00:00.123456'", "timestamp(6)"},
+                {"TIMESTAMP '2020-09-27 12:34:56.1'", "timestamp(1)"},
+                {"TIMESTAMP '2020-09-27 12:34:56.9'", "timestamp(1)"},
+                {"TIMESTAMP '2020-09-27 12:34:56.123'", "timestamp(3)"},
+                {"TIMESTAMP '2020-09-27 12:34:56.123000'", "timestamp(6)"},
+                {"TIMESTAMP '2020-09-27 12:34:56.999'", "timestamp(3)"},
+                {"TIMESTAMP '2020-09-27 12:34:56.123456'", "timestamp(6)"},
+                {"TIMESTAMP '1970-01-01 00:00:00.1234561'", "timestamp(6)"},
+                {"TIMESTAMP '1970-01-01 00:00:00.123456499'", "timestamp(6)"},
+                {"TIMESTAMP '1970-01-01 00:00:00.123456499999'", "timestamp(6)"},
+                {"TIMESTAMP '1970-01-01 00:00:00.1234565'", "timestamp(6)"},
+                {"TIMESTAMP '1970-01-01 00:00:00.111222333444'", "timestamp(6)"},
+                {"TIMESTAMP '1970-01-01 00:00:00.9999995'", "timestamp(6)"},
+                {"TIMESTAMP '1970-01-01 23:59:59.9999995'", "timestamp(6)"},
+                {"TIMESTAMP '1969-12-31 23:59:59.9999995'", "timestamp(6)"},
+                {"TIMESTAMP '1969-12-31 23:59:59.999999499999'", "timestamp(6)"},
+                {"TIMESTAMP '1969-12-31 23:59:59.9999994'", "timestamp(6)"}};
     }
 
     @Override
