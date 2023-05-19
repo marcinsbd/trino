@@ -81,6 +81,135 @@ public class TestIcebergMigrateProcedure
                 .toArray(Object[][]::new);
     }
 
+    @Test(dataProvider = "fileFormats")
+    public void testMigrateArrayOfBigInts(IcebergFileFormat fileFormat)
+    {
+        String tableName = "test_migrate_unsupported_array_of_tmst" + randomNameSuffix();
+        String hiveTableName = "hive.tpch." + tableName;
+        String icebergTableName = "iceberg.tpch." + tableName;
+
+        assertUpdate("CREATE TABLE " + hiveTableName + " (a ARRAY(BIGINT)) WITH (format='" +fileFormat+"')");
+        assertUpdate("INSERT INTO " + hiveTableName + " VALUES (ARRAY[1, 2, 3]) ", 1);
+        assertQuery("SELECT * FROM " + hiveTableName, "VALUES (ARRAY[1, 2, 3])");
+
+        assertQueryFails("SELECT * FROM " + icebergTableName, "Not an Iceberg table: .*");
+
+        assertUpdate("CALL iceberg.system.migrate('tpch', '" + tableName + "')");
+        assertQuery("SELECT * FROM " + icebergTableName," VALUES (ARRAY[1L, 2L, 3L])");
+
+        assertUpdate("DROP TABLE " + icebergTableName);
+    }
+
+    @Test(dataProvider = "fileFormats")
+    public void testMigrateArrayOfInteger(IcebergFileFormat fileFormat)
+    {
+        String tableName = "test_migrate_unsupported_array_of_tmst" + randomNameSuffix();
+        String hiveTableName = "hive.tpch." + tableName;
+        String icebergTableName = "iceberg.tpch." + tableName;
+
+        assertUpdate("CREATE TABLE " + hiveTableName + " (a ARRAY(INTEGER)) WITH (format='" +fileFormat+"')");
+        assertUpdate("INSERT INTO " + hiveTableName + " VALUES (ARRAY[1, 2, 3]) ", 1);
+        assertQuery("SELECT * FROM " + hiveTableName, "VALUES (ARRAY[1, 2, 3])");
+
+        assertQueryFails("SELECT * FROM " + icebergTableName, "Not an Iceberg table: .*");
+
+        assertUpdate("CALL iceberg.system.migrate('tpch', '" + tableName + "')");
+        assertQuery("SELECT * FROM " + icebergTableName," VALUES (ARRAY[1, 2, 3])");
+
+        assertUpdate("DROP TABLE " + icebergTableName);
+    }
+
+    @Test(dataProvider = "fileFormats")
+    public void testMigrateMapWithInteger(IcebergFileFormat fileFormat)
+    {
+        String tableName = "test_migrate_unsupported_map_with_tmst" + randomNameSuffix();
+        String hiveTableName = "hive.tpch." + tableName;
+        String icebergTableName = "iceberg.tpch." + tableName;
+
+        assertUpdate("CREATE TABLE " + hiveTableName + " (m MAP(INTEGER, INTEGER)) WITH (format='" +fileFormat+"')");
+        assertUpdate("INSERT INTO " + hiveTableName + " VALUES MAP(ARRAY[2], ARRAY[1]) ", 1);
+        assertQuery("SELECT m[2] FROM " + hiveTableName, "VALUES 1");
+        assertQueryFails("SELECT * FROM " + icebergTableName, "Not an Iceberg table: .*");
+
+        assertUpdate("CALL iceberg.system.migrate('tpch', '" + tableName + "')");
+        assertQuery("SELECT m[2] FROM " + icebergTableName, "VALUES 1");
+
+        assertUpdate("DROP TABLE " + icebergTableName);
+    }
+
+    @Test(dataProvider = "fileFormats")
+    public void testMigrateRowWithInt(IcebergFileFormat fileFormat)
+    {
+        String tableName = "test_migrate_unsupported_row_with_tmst" + randomNameSuffix();
+        String hiveTableName = "hive.tpch." + tableName;
+        String icebergTableName = "iceberg.tpch." + tableName;
+
+        assertUpdate("CREATE TABLE " + hiveTableName + " (id BIGINT, r ROW(t BIGINT, v BIGINT)) WITH (format='" +fileFormat+"')");
+        assertUpdate("INSERT INTO " + hiveTableName + " VALUES (1, ROW(2, 3)) ", 1);
+        assertQuery("SELECT id, r.t FROM " + hiveTableName + " WHERE id=1", "VALUES (1, 2)");
+        assertQueryFails("SELECT * FROM " + icebergTableName, "Not an Iceberg table: .*");
+
+        assertUpdate("CALL iceberg.system.migrate('tpch', '" + tableName + "')");
+        assertQuery("SELECT id, r.t FROM " + icebergTableName + " WHERE id=1", "VALUES (1, 2)");
+
+        assertUpdate("DROP TABLE " + icebergTableName);
+    }
+
+    @Test(dataProvider = "fileFormats")
+    public void testMigrateArrayOfVarchar(IcebergFileFormat fileFormat)
+    {
+        String tableName = "test_migrate_unsupported_array_of_tmst" + randomNameSuffix();
+        String hiveTableName = "hive.tpch." + tableName;
+        String icebergTableName = "iceberg.tpch." + tableName;
+
+        assertUpdate("CREATE TABLE " + hiveTableName + " (a ARRAY(VARCHAR)) WITH (format='" +fileFormat+"')");
+        assertUpdate("INSERT INTO " + hiveTableName + " VALUES (ARRAY['1', '2', '3']) ", 1);
+        assertQuery("SELECT * FROM " + hiveTableName, "VALUES (ARRAY['1', '2', '3'])");
+
+        assertQueryFails("SELECT * FROM " + icebergTableName, "Not an Iceberg table: .*");
+
+        assertUpdate("CALL iceberg.system.migrate('tpch', '" + tableName + "')");
+        assertQuery("SELECT * FROM " + icebergTableName," VALUES (ARRAY['1', '2', '3'])");
+
+        assertUpdate("DROP TABLE " + icebergTableName);
+    }
+
+    @Test(dataProvider = "fileFormats")
+    public void testMigrateMapWithVarchar(IcebergFileFormat fileFormat)
+    {
+        String tableName = "test_migrate_unsupported_map_with_tmst" + randomNameSuffix();
+        String hiveTableName = "hive.tpch." + tableName;
+        String icebergTableName = "iceberg.tpch." + tableName;
+
+        assertUpdate("CREATE TABLE " + hiveTableName + " (m MAP(VARCHAR, VARCHAR)) WITH (format='" +fileFormat+"')");
+        assertUpdate("INSERT INTO " + hiveTableName + " VALUES MAP(ARRAY['2'], ARRAY['1']) ", 1);
+        assertQuery("SELECT m[2] FROM " + hiveTableName, "VALUES '1'");
+        assertQueryFails("SELECT * FROM " + icebergTableName, "Not an Iceberg table: .*");
+
+        assertUpdate("CALL iceberg.system.migrate('tpch', '" + tableName + "')");
+        assertQuery("SELECT m[2] FROM " + icebergTableName, "VALUES '1'");
+
+        assertUpdate("DROP TABLE " + icebergTableName);
+    }
+
+    @Test(dataProvider = "fileFormats")
+    public void testMigrateRowWithVarchar(IcebergFileFormat fileFormat)
+    {
+        String tableName = "test_migrate_unsupported_row_with_tmst" + randomNameSuffix();
+        String hiveTableName = "hive.tpch." + tableName;
+        String icebergTableName = "iceberg.tpch." + tableName;
+
+        assertUpdate("CREATE TABLE " + hiveTableName + " (id VARCHAR, r ROW(t VARCHAR, v VARCHAR)) WITH (format='" +fileFormat+"')");
+        assertUpdate("INSERT INTO " + hiveTableName + " VALUES ('1', ROW('2', '3')) ", 1);
+        assertQuery("SELECT id, r.t FROM " + hiveTableName + " WHERE id=1", "VALUES (1, 2)");
+        assertQueryFails("SELECT * FROM " + icebergTableName, "Not an Iceberg table: .*");
+
+        assertUpdate("CALL iceberg.system.migrate('tpch', '" + tableName + "')");
+        assertQuery("SELECT id, r.t FROM " + icebergTableName + " WHERE id='1'", "VALUES ('1', '2')");
+
+        assertUpdate("DROP TABLE " + icebergTableName);
+    }
+
     @Test
     public void testMigratePartitionedTable()
     {
