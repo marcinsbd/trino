@@ -19,6 +19,7 @@ import com.google.common.io.Resources;
 import io.airlift.http.server.testing.TestingHttpServer;
 import io.airlift.log.Logger;
 import io.airlift.log.Logging;
+import io.trino.plugin.hive.TestingHivePlugin;
 import io.trino.plugin.hive.containers.HiveHadoop;
 import io.trino.plugin.hive.containers.HiveMinioDataLake;
 import io.trino.plugin.iceberg.catalog.jdbc.TestingIcebergJdbcServer;
@@ -384,11 +385,22 @@ public final class IcebergQueryRunner
                 throws Exception
         {
             Logger log = Logger.get(DefaultIcebergQueryRunnerMain.class);
+            Path dataDirectory = java.nio.file.Files.createTempDirectory("_test_hidden");
+
             @SuppressWarnings("resource")
             DistributedQueryRunner queryRunner = IcebergQueryRunner.builder()
                     .setExtraProperties(ImmutableMap.of("http-server.http.port", "8080"))
                     .setInitialTables(TpchTable.getTables())
+                    .setMetastoreDirectory(dataDirectory.toFile())
                     .build();
+            queryRunner.installPlugin(new TestingHivePlugin());
+            queryRunner.createCatalog("hive", "hive", ImmutableMap.<String, String>builder()
+                            .put("hive.metastore", "file")
+                            .put("hive.metastore.catalog.dir", dataDirectory.toString())
+                            .put("hive.security", "allow-all")
+//                            .put("hive.parquet.timestamp.skip.conversion", "false")
+//                            .put("hive.parquet.write.int64.timestamp", "true")
+                    .buildOrThrow());
             log.info("======== SERVER STARTED ========");
             log.info("\n====\n%s\n====", queryRunner.getCoordinator().getBaseUrl());
         }

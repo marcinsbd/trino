@@ -40,6 +40,7 @@ import io.trino.spi.type.TypeManager;
 import org.apache.iceberg.MetricsConfig;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.types.Types;
+import org.joda.time.DateTimeZone;
 import org.weakref.jmx.Managed;
 
 import java.io.Closeable;
@@ -93,19 +94,23 @@ public class IcebergFileWriterFactory
     private final FileFormatDataSourceStats readStats;
     private final OrcWriterStats orcWriterStats = new OrcWriterStats();
     private final OrcWriterOptions orcWriterOptions;
+    private final DateTimeZone parquetTimeZone;
 
     @Inject
     public IcebergFileWriterFactory(
             TypeManager typeManager,
             NodeVersion nodeVersion,
             FileFormatDataSourceStats readStats,
-            OrcWriterConfig orcWriterConfig)
+            OrcWriterConfig orcWriterConfig,
+            IcebergConfig icebergConfig)
     {
         checkArgument(!orcWriterConfig.isUseLegacyVersion(), "the ORC writer shouldn't be configured to use a legacy version");
         this.typeManager = requireNonNull(typeManager, "typeManager is null");
         this.nodeVersion = requireNonNull(nodeVersion, "nodeVersion is null");
         this.readStats = requireNonNull(readStats, "readStats is null");
         this.orcWriterOptions = orcWriterConfig.toOrcWriterOptions();
+        requireNonNull(icebergConfig, "icebergConfig is null");
+        this.parquetTimeZone = icebergConfig.getParquetDateTimeZone();
     }
 
     @Managed
@@ -192,7 +197,8 @@ public class IcebergFileWriterFactory
                     IntStream.range(0, fileColumnNames.size()).toArray(),
                     getCompressionCodec(session).getParquetCompressionCodec(),
                     nodeVersion.toString(),
-                    fileSystem);
+                    fileSystem,
+                    parquetTimeZone);
         }
         catch (IOException e) {
             throw new TrinoException(ICEBERG_WRITER_OPEN_ERROR, "Error creating Parquet file", e);

@@ -24,6 +24,7 @@ import org.apache.iceberg.MetricsConfig;
 import org.apache.iceberg.io.InputFile;
 import org.apache.parquet.format.CompressionCodec;
 import org.apache.parquet.schema.MessageType;
+import org.joda.time.DateTimeZone;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -53,7 +54,8 @@ public class IcebergParquetFileWriter
             int[] fileInputColumnIndexes,
             CompressionCodec compressionCodec,
             String trinoVersion,
-            TrinoFileSystem fileSystem)
+            TrinoFileSystem fileSystem,
+            DateTimeZone parquetTimeZone)
             throws IOException
     {
         super(outputFile,
@@ -67,7 +69,7 @@ public class IcebergParquetFileWriter
                 compressionCodec,
                 trinoVersion,
                 false,
-                Optional.empty(),
+                Optional.of(parquetTimeZone),
                 Optional.empty());
         this.metricsConfig = requireNonNull(metricsConfig, "metricsConfig is null");
         this.inputFile = new ForwardingInputFile(fileSystem.newInputFile(outputFile.location()));

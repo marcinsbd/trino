@@ -196,7 +196,8 @@ public class TestIcebergNodeLocalDynamicSplitPruning
                 stats,
                 ORC_READER_CONFIG,
                 PARQUET_READER_CONFIG,
-                TESTING_TYPE_MANAGER);
+                TESTING_TYPE_MANAGER,
+                icebergConfig);
 
         return provider.createPageSource(
                 transaction,

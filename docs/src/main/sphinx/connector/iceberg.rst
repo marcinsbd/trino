@@ -128,6 +128,9 @@ is used.
   * - ``iceberg.register-table-procedure.enabled``
     - Enable to allow user to call ``register_table`` procedure.
     - ``false``
+  * - ``iceberg.parquet.time-zone``
+    - Adjusts timestamp values to a specific time zone.
+    - ``UTC``
 
 Metastores
 ----------
