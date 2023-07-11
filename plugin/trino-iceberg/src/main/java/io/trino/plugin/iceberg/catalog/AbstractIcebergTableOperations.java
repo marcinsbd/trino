@@ -41,6 +41,7 @@ import java.util.Optional;
 import java.util.OptionalInt;
 
 import static com.google.common.base.Preconditions.checkState;
+import static com.google.common.base.Verify.verify;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static io.trino.plugin.hive.HiveType.toHiveType;
 import static io.trino.plugin.hive.util.HiveClassNames.FILE_INPUT_FORMAT_CLASS;
@@ -152,6 +153,10 @@ public abstract class AbstractIcebergTableOperations
             return;
         }
 
+        if (tableName.endsWith("$storage_table")) {
+            commitVirtualStorageTable(base, metadata);
+        }
+
         if (base == null) {
             if (PROVIDER_PROPERTY_VALUE.equals(metadata.properties().get(PROVIDER_PROPERTY_KEY))) {
                 // Assume this is a table executing migrate procedure
@@ -168,6 +173,19 @@ public abstract class AbstractIcebergTableOperations
         }
 
         shouldRefresh = true;
+    }
+
+    private void commitVirtualStorageTable(@Nullable TableMetadata base, TableMetadata metadata)
+    {
+        if (base==null) {
+            verify(version.isEmpty(), "commitNewTable called on a table which already exists");
+//            String newMetadataLocation = writeNewMetadata(metadata, 0);
+            writeNewMetadata(metadata, 0);
+        }
+        else {
+//            String newMetadataLocation = writeNewMetadata(metadata, version.orElseThrow() + 1);
+            writeNewMetadata(metadata, version.orElseThrow() + 1);
+        }
     }
 
     protected abstract String getRefreshedLocation(boolean invalidateCaches);
@@ -212,7 +230,8 @@ public abstract class AbstractIcebergTableOperations
         return new SchemaTableName(database, tableName);
     }
 
-    protected String writeNewMetadata(TableMetadata metadata, int newVersion)
+    @Override
+    public String writeNewMetadata(TableMetadata metadata, int newVersion)
     {
         String newTableMetadataFilePath = newTableMetadataFilePath(metadata, newVersion);
         OutputFile newMetadataLocation = fileIo.newOutputFile(newTableMetadataFilePath);
@@ -223,12 +242,13 @@ public abstract class AbstractIcebergTableOperations
         return newTableMetadataFilePath;
     }
 
-    protected void refreshFromMetadataLocation(String newLocation)
+    @Override
+    public TableMetadata refreshFromMetadataLocation(String newLocation)
     {
         // use null-safe equality check because new tables have a null metadata location
         if (Objects.equals(currentMetadataLocation, newLocation)) {
             shouldRefresh = false;
-            return;
+            return null;
         }
 
         TableMetadata newMetadata;
@@ -261,6 +281,7 @@ public abstract class AbstractIcebergTableOperations
         currentMetadataLocation = newLocation;
         version = parseVersion(newLocation);
         shouldRefresh = false;
+        return newMetadata;
     }
 
     private static boolean isNotFoundException(Throwable failure)

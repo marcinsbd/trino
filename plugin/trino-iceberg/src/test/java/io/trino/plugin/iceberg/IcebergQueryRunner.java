@@ -384,11 +384,24 @@ public final class IcebergQueryRunner
                 throws Exception
         {
             Logger log = Logger.get(DefaultIcebergQueryRunnerMain.class);
+//            Path dataDirectory = java.nio.file.Files.createTempDirectory("_test_hidden");
+
             @SuppressWarnings("resource")
             DistributedQueryRunner queryRunner = IcebergQueryRunner.builder()
+//                    .setIcebergProperties(ImmutableMap.of("iceberg.materialized-views.hidden-storage-table", "false"))
+                    .setIcebergProperties(ImmutableMap.of("iceberg.materialized-views.hidden-storage-table", "true"))
                     .setExtraProperties(ImmutableMap.of("http-server.http.port", "8080"))
                     .setInitialTables(TpchTable.getTables())
+//                    .setMetastoreDirectory(dataDirectory.toFile())
                     .build();
+//            queryRunner.installPlugin(new TestingHivePlugin());
+//            queryRunner.createCatalog("hive", "hive", ImmutableMap.<String, String>builder()
+//                            .put("hive.metastore", "file")
+//                            .put("hive.metastore.catalog.dir", dataDirectory.toString())
+//                            .put("hive.security", "allow-all")
+//
+//
+//                    .buildOrThrow());
             log.info("======== SERVER STARTED ========");
             log.info("\n====\n%s\n====", queryRunner.getCoordinator().getBaseUrl());
         }
