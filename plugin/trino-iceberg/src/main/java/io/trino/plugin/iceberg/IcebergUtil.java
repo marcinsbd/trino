@@ -95,6 +95,7 @@ import static com.google.common.collect.Maps.immutableEntry;
 import static com.google.common.collect.Streams.mapWithIndex;
 import static io.airlift.slice.Slices.utf8Slice;
 import static io.trino.plugin.base.io.ByteBuffers.getWrappedBytes;
+import static io.trino.plugin.hive.HiveMetadata.MV_CURRENT_METADATA_LOCATION;
 import static io.trino.plugin.hive.HiveMetadata.TABLE_COMMENT;
 import static io.trino.plugin.iceberg.ColumnIdentity.createColumnIdentity;
 import static io.trino.plugin.iceberg.IcebergErrorCode.ICEBERG_BAD_DATA;
@@ -153,6 +154,7 @@ import static org.apache.iceberg.BaseMetastoreTableOperations.ICEBERG_TABLE_TYPE
 import static org.apache.iceberg.BaseMetastoreTableOperations.TABLE_TYPE_PROP;
 import static org.apache.iceberg.LocationProviders.locationsFor;
 import static org.apache.iceberg.MetadataTableUtils.createMetadataTableInstance;
+import static org.apache.iceberg.TableMetadata.newTableMetadata;
 import static org.apache.iceberg.TableProperties.DEFAULT_FILE_FORMAT;
 import static org.apache.iceberg.TableProperties.DEFAULT_FILE_FORMAT_DEFAULT;
 import static org.apache.iceberg.TableProperties.FORMAT_VERSION;
@@ -179,7 +181,26 @@ public final class IcebergUtil
         return ICEBERG_TABLE_TYPE_VALUE.equalsIgnoreCase(table.getParameters().get(TABLE_TYPE_PROP));
     }
 
-    public static Table loadIcebergTable(TrinoCatalog catalog, IcebergTableOperationsProvider tableOperationsProvider, ConnectorSession session, SchemaTableName table)
+    public static Table loadIcebergTable(TrinoCatalog catalog,
+            IcebergTableOperationsProvider tableOperationsProvider,
+            ConnectorSession session,
+            SchemaTableName table)
+    {
+        TableOperations operations = tableOperationsProvider.createTableOperations(
+                catalog,
+                session,
+                table.getSchemaName(),
+                table.getTableName(),
+                Optional.empty(),
+                Optional.empty());
+        return new BaseTable(operations, quotedTableName(table), TRINO_METRICS_REPORTER);
+    }
+
+    public static Table loadIcebergTable(TrinoCatalog catalog,
+            IcebergTableOperationsProvider tableOperationsProvider,
+            ConnectorSession session,
+            SchemaTableName table,
+            String storageLocation)
     {
         TableOperations operations = tableOperationsProvider.createTableOperations(
                 catalog,
@@ -209,8 +230,30 @@ public final class IcebergUtil
         return new BaseTable(operations, quotedTableName(table), TRINO_METRICS_REPORTER);
     }
 
+    public static Table getIcebergTableWithMetadata(
+            TrinoCatalog catalog,
+            IcebergTableOperationsProvider tableOperationsProvider,
+            ConnectorSession session,
+            SchemaTableName table,
+            TableMetadata tableMetadata,
+            String storageLocation)
+    {
+        IcebergTableOperations operations = tableOperationsProvider.createTableOperations(
+                catalog,
+                session,
+                table.getSchemaName(),
+                table.getTableName(),
+                Optional.empty(),
+                Optional.of(storageLocation));
+        operations.initializeFromMetadata(tableMetadata);
+        return new BaseTable(operations, quotedTableName(table), TRINO_METRICS_REPORTER);
+    }
+
+
     public static Map<String, Object> getIcebergTableProperties(Table icebergTable)
     {
+        Map<String, String> tableProps = icebergTable.properties();
+
         ImmutableMap.Builder<String, Object> properties = ImmutableMap.builder();
         properties.put(FILE_FORMAT_PROPERTY, getFileFormat(icebergTable));
         if (!icebergTable.spec().fields().isEmpty()) {
@@ -232,11 +275,52 @@ public final class IcebergUtil
         properties.put(FORMAT_VERSION_PROPERTY, formatVersion);
 
         // iceberg ORC format bloom filter properties
-        String orcBloomFilterColumns = icebergTable.properties().get(ORC_BLOOM_FILTER_COLUMNS_KEY);
+        String orcBloomFilterColumns = tableProps.get(ORC_BLOOM_FILTER_COLUMNS_KEY);
         if (orcBloomFilterColumns != null) {
             properties.put(ORC_BLOOM_FILTER_COLUMNS, Splitter.on(',').trimResults().omitEmptyStrings().splitToList(orcBloomFilterColumns));
         }
-        String orcBloomFilterFpp = icebergTable.properties().get(ORC_BLOOM_FILTER_FPP_KEY);
+        String orcBloomFilterFpp = tableProps.get(ORC_BLOOM_FILTER_FPP_KEY);
+        if (orcBloomFilterFpp != null) {
+            properties.put(ORC_BLOOM_FILTER_FPP, Double.parseDouble(orcBloomFilterFpp));
+        }
+
+        return properties.buildOrThrow();
+    }
+
+    public static Map<String, Object> getIcebergTableProperties(TableMetadata tableMetadata)
+    {
+        Map<String, String> tableProps = tableMetadata.properties();
+
+        ImmutableMap.Builder<String, Object> properties = ImmutableMap.builder();
+        properties.put(FILE_FORMAT_PROPERTY, getFileFormat(tableProps));
+        if (!tableMetadata.spec().fields().isEmpty()) {
+            properties.put(PARTITIONING_PROPERTY, toPartitionFields(tableMetadata.spec()));
+        }
+
+        SortOrder sortOrder = tableMetadata.sortOrder();
+        // TODO: Support sort column transforms (https://github.com/trinodb/trino/issues/15088)
+        if (sortOrder.isSorted() && sortOrder.fields().stream().allMatch(sortField -> sortField.transform().isIdentity())) {
+            List<String> sortColumnNames = toSortFields(sortOrder);
+            properties.put(SORTED_BY_PROPERTY, sortColumnNames);
+        }
+
+        if (!tableMetadata.location().isEmpty()) {
+            properties.put(LOCATION_PROPERTY, tableMetadata.location());
+        }
+
+        if (!tableMetadata.metadataFileLocation().isEmpty()) {
+            properties.put(MV_CURRENT_METADATA_LOCATION, tableMetadata.metadataFileLocation());
+        }
+
+        int formatVersion = tableMetadata.formatVersion();
+        properties.put(FORMAT_VERSION_PROPERTY, formatVersion);
+
+        // iceberg ORC format bloom filter properties
+        String orcBloomFilterColumns = tableProps.get(ORC_BLOOM_FILTER_COLUMNS_KEY);
+        if (orcBloomFilterColumns != null) {
+            properties.put(ORC_BLOOM_FILTER_COLUMNS, Splitter.on(',').trimResults().omitEmptyStrings().splitToList(orcBloomFilterColumns));
+        }
+        String orcBloomFilterFpp = tableProps.get(ORC_BLOOM_FILTER_FPP_KEY);
         if (orcBloomFilterFpp != null) {
             properties.put(ORC_BLOOM_FILTER_FPP, Double.parseDouble(orcBloomFilterFpp));
         }
@@ -605,7 +689,62 @@ public final class IcebergUtil
         List<String> columns = getOrcBloomFilterColumns(tableMetadata.getProperties());
         if (!columns.isEmpty()) {
             checkFormatForProperty(fileFormat.toIceberg(), FileFormat.ORC, ORC_BLOOM_FILTER_COLUMNS);
-            validateOrcBloomFilterColumns(tableMetadata, columns);
+            validateOrcBloomFilterColumns(tableMetadata.getColumns(), columns);
+            propertiesBuilder.put(ORC_BLOOM_FILTER_COLUMNS_KEY, Joiner.on(",").join(columns));
+            propertiesBuilder.put(ORC_BLOOM_FILTER_FPP_KEY, String.valueOf(getOrcBloomFilterFpp(tableMetadata.getProperties())));
+        }
+
+        if (tableMetadata.getComment().isPresent()) {
+            propertiesBuilder.put(TABLE_COMMENT, tableMetadata.getComment().get());
+        }
+
+        return catalog.newCreateTableTransaction(session, schemaTableName, schema, partitionSpec, sortOrder, targetPath, propertiesBuilder.buildOrThrow());
+    }
+
+    public static TableMetadata newCreateTableMetadata(List<ColumnMetadata> columnsMetadata, Map<String, Object> properties, String location)
+    {
+        Schema schema = schemaFromMetadata(columnsMetadata);
+        PartitionSpec partitionSpec = parsePartitionFields(schema, getPartitioning(properties));
+        SortOrder sortOrder = parseSortFields(schema, getSortOrder(properties));
+
+        ImmutableMap.Builder<String, String> propertiesBuilder = ImmutableMap.builder();
+        IcebergFileFormat fileFormat = IcebergTableProperties.getFileFormat(properties);
+        propertiesBuilder.put(DEFAULT_FILE_FORMAT, fileFormat.toIceberg().toString());
+        propertiesBuilder.put(FORMAT_VERSION, Integer.toString(IcebergTableProperties.getFormatVersion(properties)));
+
+        // iceberg ORC format bloom filter properties used by create table
+        List<String> columns = getOrcBloomFilterColumns(properties);
+        if (!columns.isEmpty()) {
+            checkFormatForProperty(fileFormat.toIceberg(), FileFormat.ORC, ORC_BLOOM_FILTER_COLUMNS);
+            validateOrcBloomFilterColumns(columnsMetadata, columns);
+            propertiesBuilder.put(ORC_BLOOM_FILTER_COLUMNS_KEY, Joiner.on(",").join(columns));
+            propertiesBuilder.put(ORC_BLOOM_FILTER_FPP_KEY, String.valueOf(getOrcBloomFilterFpp(properties)));
+        }
+
+//        if (comment.isPresent()) {
+//            propertiesBuilder.put(TABLE_COMMENT, comment.get());
+//        }
+        TableMetadata metadata = newTableMetadata(schema, partitionSpec, sortOrder, location, propertiesBuilder.buildOrThrow());
+        return metadata;
+    }
+
+    public static Transaction newCreateTableTransaction(TrinoCatalog catalog, ConnectorTableMetadata tableMetadata, ConnectorSession session, String targetPath)
+    {
+        SchemaTableName schemaTableName = tableMetadata.getTable();
+        Schema schema = schemaFromMetadata(tableMetadata.getColumns());
+        PartitionSpec partitionSpec = parsePartitionFields(schema, getPartitioning(tableMetadata.getProperties()));
+        SortOrder sortOrder = parseSortFields(schema, getSortOrder(tableMetadata.getProperties()));
+
+        ImmutableMap.Builder<String, String> propertiesBuilder = ImmutableMap.builder();
+        IcebergFileFormat fileFormat = IcebergTableProperties.getFileFormat(tableMetadata.getProperties());
+        propertiesBuilder.put(DEFAULT_FILE_FORMAT, fileFormat.toIceberg().toString());
+        propertiesBuilder.put(FORMAT_VERSION, Integer.toString(IcebergTableProperties.getFormatVersion(tableMetadata.getProperties())));
+
+        // iceberg ORC format bloom filter properties used by create table
+        List<String> columns = getOrcBloomFilterColumns(tableMetadata.getProperties());
+        if (!columns.isEmpty()) {
+            checkFormatForProperty(fileFormat.toIceberg(), FileFormat.ORC, ORC_BLOOM_FILTER_COLUMNS);
+            validateOrcBloomFilterColumns(tableMetadata.getColumns(), columns);
             propertiesBuilder.put(ORC_BLOOM_FILTER_COLUMNS_KEY, Joiner.on(",").join(columns));
             propertiesBuilder.put(ORC_BLOOM_FILTER_FPP_KEY, String.valueOf(getOrcBloomFilterFpp(tableMetadata.getProperties())));
         }
@@ -697,9 +836,9 @@ public final class IcebergUtil
         }
     }
 
-    private static void validateOrcBloomFilterColumns(ConnectorTableMetadata tableMetadata, List<String> orcBloomFilterColumns)
+    private static void validateOrcBloomFilterColumns(List<ColumnMetadata> columns, List<String> orcBloomFilterColumns)
     {
-        Set<String> allColumns = tableMetadata.getColumns().stream()
+        Set<String> allColumns = columns.stream()
                 .map(ColumnMetadata::getName)
                 .collect(toImmutableSet());
         if (!allColumns.containsAll(orcBloomFilterColumns)) {

@@ -73,6 +73,7 @@ public class IcebergConfig
     private boolean deleteSchemaLocationsFallback;
     private double minimumAssignedSplitWeight = 0.05;
     private Optional<String> materializedViewsStorageSchema = Optional.empty();
+    private boolean hiddenStorageTable;
     private boolean sortedWritingEnabled = true;
 
     public CatalogType getCatalogType()
@@ -353,6 +354,19 @@ public class IcebergConfig
     public IcebergConfig setMaterializedViewsStorageSchema(String materializedViewsStorageSchema)
     {
         this.materializedViewsStorageSchema = Optional.ofNullable(materializedViewsStorageSchema);
+        return this;
+    }
+
+    public boolean isHiddenStorageTableEnabled()
+    {
+        return hiddenStorageTable;
+    }
+
+    @Config("iceberg.materialized-views.hidden-storage-table")
+    @ConfigDescription("Enabling hiding storage table for materialized views TODO")
+    public IcebergConfig setHiddenStorageTableEnabled(boolean hiddenStorageTable)
+    {
+        this.hiddenStorageTable = hiddenStorageTable;
         return this;
     }
 

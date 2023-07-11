@@ -21,11 +21,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import static io.trino.spi.session.PropertyMetadata.booleanProperty;
 import static io.trino.spi.session.PropertyMetadata.stringProperty;
 
 public class IcebergMaterializedViewAdditionalProperties
 {
     public static final String STORAGE_SCHEMA = "storage_schema";
+    public static final String HIDDEN_STORAGE_TABLE = "hidden_storage_table";
 
     private final List<PropertyMetadata<?>> materializedViewProperties;
 
@@ -36,6 +38,10 @@ public class IcebergMaterializedViewAdditionalProperties
                 STORAGE_SCHEMA,
                 "Schema for creating materialized view storage table",
                 icebergConfig.getMaterializedViewsStorageSchema().orElse(null),
+                false),
+                booleanProperty(HIDDEN_STORAGE_TABLE,
+                        "Hides storage tabel for materialized views",
+                icebergConfig.isHiddenStorageTableEnabled(),
                 false));
     }
 
@@ -47,5 +53,10 @@ public class IcebergMaterializedViewAdditionalProperties
     public static Optional<String> getStorageSchema(Map<String, Object> materializedViewProperties)
     {
         return Optional.ofNullable((String) materializedViewProperties.get(STORAGE_SCHEMA));
+    }
+
+    public static boolean isHiddenStorageTableEnabled(Map<String, Object> materializedViewProperties)
+    {
+        return (Boolean) materializedViewProperties.get(HIDDEN_STORAGE_TABLE);
     }
 }

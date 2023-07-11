@@ -463,6 +463,9 @@ public class IcebergMetadata
 
         // Only when dealing with an actual system table proceed to retrieve the base table for the system table
         String name = IcebergTableName.tableNameFrom(tableName.getTableName());
+        if (tableName.getTableName().endsWith("$storage_table")){
+            name = tableName.getTableName();
+        }
         Table table;
         try {
             table = catalog.loadTable(session, new SchemaTableName(tableName.getSchemaName(), name));
@@ -2705,12 +2708,18 @@ public class IcebergMetadata
             // View not found, might have been concurrently deleted
             return new MaterializedViewFreshness(STALE, Optional.empty());
         }
-
+        if (materializedViewDefinition.get().getProperties().get("mv_current_metadata_location") != null) {
+            return new MaterializedViewFreshness(STALE, Optional.empty());
+        }
         SchemaTableName storageTableName = materializedViewDefinition.get().getStorageTable()
                 .map(CatalogSchemaTableName::getSchemaTableName)
                 .orElseThrow(() -> new IllegalStateException("Storage table missing in definition of materialized view " + materializedViewName));
 
         Table icebergTable = catalog.loadTable(session, storageTableName);
+
+        // Storage table is not real table????
+        // How to keep the freshness data for "virtual" storage table
+
         String dependsOnTables = icebergTable.currentSnapshot().summary().getOrDefault(DEPENDS_ON_TABLES, "");
         if (dependsOnTables.isEmpty()) {
             // Information missing. While it's "unknown" whether storage is stale, we return "stale": under no normal circumstances dependsOnTables should be missing.

@@ -95,6 +95,11 @@ public abstract class AbstractMetastoreTableOperations
         verify(version.isEmpty(), "commitNewTable called on a table which already exists");
         String newMetadataLocation = writeNewMetadata(metadata, 0);
 
+        // if (metadata has some toggle on)  skip the rest
+        // how to pass metadata Location
+        // needs to be passed through metadata
+        // be known for the caller upfront
+
         Table.Builder builder = Table.builder()
                 .setDatabaseName(database)
                 .setTableName(tableName)

@@ -20,4 +20,8 @@ public interface IcebergTableOperations
         extends TableOperations
 {
     void initializeFromMetadata(TableMetadata tableMetadata);
+
+    String writeNewMetadata(TableMetadata metadata, int newVersion);
+
+    TableMetadata refreshFromMetadataLocation(String location);
 }
