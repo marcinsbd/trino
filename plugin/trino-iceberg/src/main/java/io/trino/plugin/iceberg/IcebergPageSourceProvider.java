@@ -109,6 +109,7 @@ import org.apache.parquet.io.MessageColumnIO;
 import org.apache.parquet.schema.GroupType;
 import org.apache.parquet.schema.MessageType;
 import org.apache.parquet.schema.PrimitiveType;
+import org.joda.time.DateTimeZone;
 import org.roaringbitmap.longlong.LongBitmapDataProvider;
 import org.roaringbitmap.longlong.Roaring64Bitmap;
 
@@ -194,7 +195,6 @@ import static org.apache.iceberg.FileContent.POSITION_DELETES;
 import static org.apache.iceberg.MetadataColumns.DELETE_FILE_PATH;
 import static org.apache.iceberg.MetadataColumns.DELETE_FILE_POS;
 import static org.apache.iceberg.MetadataColumns.ROW_POSITION;
-import static org.joda.time.DateTimeZone.UTC;
 
 public class IcebergPageSourceProvider
         implements ConnectorPageSourceProvider
@@ -206,6 +206,7 @@ public class IcebergPageSourceProvider
     private final OrcReaderOptions orcReaderOptions;
     private final ParquetReaderOptions parquetReaderOptions;
     private final TypeManager typeManager;
+    private final DateTimeZone timeZone;
 
     @Inject
     public IcebergPageSourceProvider(
@@ -213,13 +214,16 @@ public class IcebergPageSourceProvider
             FileFormatDataSourceStats fileFormatDataSourceStats,
             OrcReaderConfig orcReaderConfig,
             ParquetReaderConfig parquetReaderConfig,
-            TypeManager typeManager)
+            TypeManager typeManager,
+            IcebergConfig icebergConfig)
     {
         this.fileSystemFactory = requireNonNull(fileSystemFactory, "fileSystemFactory is null");
         this.fileFormatDataSourceStats = requireNonNull(fileFormatDataSourceStats, "fileFormatDataSourceStats is null");
         this.orcReaderOptions = orcReaderConfig.toOrcReaderOptions();
         this.parquetReaderOptions = parquetReaderConfig.toParquetReaderOptions();
         this.typeManager = requireNonNull(typeManager, "typeManager is null");
+        requireNonNull(icebergConfig, "icebergConfig is null");
+        this.timeZone = icebergConfig.getParquetDateTimeZone();
     }
 
     @Override
@@ -536,7 +540,7 @@ public class IcebergPageSourceProvider
         }
     }
 
-    private static ReaderPageSourceWithRowPositions createOrcPageSource(
+    private ReaderPageSourceWithRowPositions createOrcPageSource(
             TrinoInputFile inputFile,
             long start,
             long length,
@@ -659,7 +663,7 @@ public class IcebergPageSourceProvider
                     predicateBuilder.build(),
                     start,
                     length,
-                    UTC,
+                    timeZone,
                     memoryUsage,
                     INITIAL_BATCH_SIZE,
                     exception -> handleException(orcDataSourceId, exception),
@@ -878,7 +882,7 @@ public class IcebergPageSourceProvider
         }
     }
 
-    private static ReaderPageSourceWithRowPositions createParquetPageSource(
+    private ReaderPageSourceWithRowPositions createParquetPageSource(
             TrinoInputFile inputFile,
             long start,
             long length,
@@ -920,7 +924,7 @@ public class IcebergPageSourceProvider
             MessageType requestedSchema = getMessageType(regularColumns, fileSchema.getName(), parquetIdToField);
             Map<List<String>, ColumnDescriptor> descriptorsByPath = getDescriptors(fileSchema, requestedSchema);
             TupleDomain<ColumnDescriptor> parquetTupleDomain = getParquetTupleDomain(descriptorsByPath, effectivePredicate);
-            TupleDomainParquetPredicate parquetPredicate = buildPredicate(requestedSchema, parquetTupleDomain, descriptorsByPath, UTC);
+            TupleDomainParquetPredicate parquetPredicate = buildPredicate(requestedSchema, parquetTupleDomain, descriptorsByPath, timeZone);
 
             long nextStart = 0;
             Optional<Long> startRowPosition = Optional.empty();
@@ -932,7 +936,7 @@ public class IcebergPageSourceProvider
                 Optional<BloomFilterStore> bloomFilterStore = getBloomFilterStore(dataSource, block, parquetTupleDomain, options);
 
                 if (start <= firstDataPage && firstDataPage < start + length &&
-                        predicateMatches(parquetPredicate, block, dataSource, descriptorsByPath, parquetTupleDomain, Optional.empty(), bloomFilterStore, UTC, ICEBERG_DOMAIN_COMPACTION_THRESHOLD)) {
+                        predicateMatches(parquetPredicate, block, dataSource, descriptorsByPath, parquetTupleDomain, Optional.empty(), bloomFilterStore, timeZone, ICEBERG_DOMAIN_COMPACTION_THRESHOLD)) {
                     blocks.add(block);
                     blockStarts.add(nextStart);
                     if (startRowPosition.isEmpty()) {
@@ -1009,7 +1013,7 @@ public class IcebergPageSourceProvider
                     blocks,
                     blockStarts.build(),
                     dataSource,
-                    UTC,
+                    timeZone,
                     memoryContext,
                     options,
                     exception -> handleException(dataSourceId, exception));

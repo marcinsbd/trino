@@ -20,6 +20,8 @@ import io.airlift.configuration.LegacyConfig;
 import io.airlift.units.DataSize;
 import io.airlift.units.Duration;
 import io.trino.plugin.hive.HiveCompressionCodec;
+import org.joda.time.DateTimeZone;
+
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Max;
@@ -73,6 +75,7 @@ public class IcebergConfig
     private double minimumAssignedSplitWeight = 0.05;
     private Optional<String> materializedViewsStorageSchema = Optional.empty();
     private boolean sortedWritingEnabled = true;
+    private String parquetTimeZone = "UTC"; //TimeZone.getDefault().getID();
 
     public CatalogType getCatalogType()
     {
@@ -365,6 +368,25 @@ public class IcebergConfig
     public IcebergConfig setSortedWritingEnabled(boolean sortedWritingEnabled)
     {
         this.sortedWritingEnabled = sortedWritingEnabled;
+        return this;
+    }
+
+    public DateTimeZone getParquetDateTimeZone()
+    {
+        return DateTimeZone.forID(parquetTimeZone);
+    }
+
+    @NotNull
+    public String getParquetTimeZone()
+    {
+        return parquetTimeZone;
+    }
+
+    @Config("iceberg.parquet.time-zone")
+    @ConfigDescription("Time zone for Parquet read and write")
+    public IcebergConfig setParquetTimeZone(String parquetTimeZone)
+    {
+        this.parquetTimeZone = parquetTimeZone;
         return this;
     }
 }

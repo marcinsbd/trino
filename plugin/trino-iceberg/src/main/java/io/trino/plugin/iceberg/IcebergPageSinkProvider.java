@@ -57,6 +57,7 @@ public class IcebergPageSinkProvider
     private final int sortingFileWriterMaxOpenFiles;
     private final TypeManager typeManager;
     private final PageSorter pageSorter;
+//    private final DateTimeZone parquetTimeZone;
 
     @Inject
     public IcebergPageSinkProvider(
@@ -78,6 +79,7 @@ public class IcebergPageSinkProvider
         this.sortingFileWriterMaxOpenFiles = sortingFileWriterConfig.getMaxOpenSortFiles();
         this.typeManager = requireNonNull(typeManager, "typeManager is null");
         this.pageSorter = requireNonNull(pageSorter, "pageSorter is null");
+//        this.parquetTimeZone = config.getParquetDateTimeZone();
     }
 
     @Override
