@@ -37,6 +37,7 @@ import static com.google.inject.multibindings.Multibinder.newSetBinder;
 import static com.google.inject.multibindings.OptionalBinder.newOptionalBinder;
 import static io.airlift.configuration.ConditionalModule.conditionalModule;
 import static io.airlift.configuration.ConfigBinder.configBinder;
+import static java.util.Objects.requireNonNull;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
 public class MongoClientModule
@@ -85,9 +86,18 @@ public class MongoClientModule
                 config);
     }
 
+    @Singleton
+    @Provides
+    public ConnectionString connectionString(MongoClientConfig mongoClientConfig)
+    {
+        requireNonNull(mongoClientConfig, "mongoClientConfig is null");
+        requireNonNull(mongoClientConfig.getConnectionUrl(), "connectionUrl is null");
+        return new ConnectionString(mongoClientConfig.getConnectionUrl());
+    }
+
     @ProvidesIntoSet
     @Singleton
-    public MongoClientSettingConfigurator defaultConfigurator(MongoClientConfig config)
+    public MongoClientSettingConfigurator defaultConfigurator(MongoClientConfig config, ConnectionString connectionString)
     {
         return options -> {
             options.writeConcern(config.getWriteConcern().getWriteConcern())
@@ -104,7 +114,7 @@ public class MongoClientModule
             if (config.getRequiredReplicaSetName() != null) {
                 options.applyToClusterSettings(builder -> builder.requiredReplicaSetName(config.getRequiredReplicaSetName()));
             }
-            options.applyConnectionString(new ConnectionString(config.getConnectionUrl()));
+            options.applyConnectionString(connectionString);
         };
     }
 }
