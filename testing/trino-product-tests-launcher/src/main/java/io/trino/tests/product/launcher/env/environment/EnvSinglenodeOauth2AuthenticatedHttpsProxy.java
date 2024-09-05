@@ -13,48 +13,48 @@
  */
 package io.trino.tests.product.launcher.env.environment;
 
-import com.google.common.collect.ImmutableList;
 import com.google.inject.Inject;
 import io.trino.tests.product.launcher.docker.DockerFiles;
 import io.trino.tests.product.launcher.docker.DockerFiles.ResourceProvider;
 import io.trino.tests.product.launcher.env.DockerContainer;
 import io.trino.tests.product.launcher.env.Environment;
 import io.trino.tests.product.launcher.env.EnvironmentProvider;
-import io.trino.tests.product.launcher.env.common.HttpProxy;
+import io.trino.tests.product.launcher.env.common.HttpsProxy;
 import io.trino.tests.product.launcher.env.common.HydraIdentityProvider;
 import io.trino.tests.product.launcher.env.common.Standard;
 import io.trino.tests.product.launcher.env.common.TestsEnvironment;
 import io.trino.tests.product.launcher.testcontainers.PortBinder;
 
 import static io.trino.tests.product.launcher.env.EnvironmentContainers.COORDINATOR;
+import static io.trino.tests.product.launcher.env.common.HttpProxy.HTTP_PROXY_CONF_DIR;
 import static io.trino.tests.product.launcher.env.common.HttpProxy.PROXY;
-import static io.trino.tests.product.launcher.env.common.Standard.CONTAINER_TRINO_CONFIG_PROPERTIES;
 import static io.trino.tests.product.launcher.env.common.Standard.CONTAINER_TRINO_ETC;
 import static java.util.Objects.requireNonNull;
 import static org.testcontainers.utility.MountableFile.forHostPath;
 
 @TestsEnvironment
-public class EnvSinglenodeOauth2HttpProxy
+public class EnvSinglenodeOauth2AuthenticatedHttpsProxy
         extends EnvironmentProvider
 {
     private final PortBinder binder;
     private final HydraIdentityProvider hydraIdentityProvider;
     private final ResourceProvider configDir;
+    private final HttpsProxy httpsProxy;
 
     @Inject
-    public EnvSinglenodeOauth2HttpProxy(
+    public EnvSinglenodeOauth2AuthenticatedHttpsProxy(
             DockerFiles dockerFiles,
             PortBinder binder,
             Standard standard,
             HydraIdentityProvider hydraIdentityProvider,
-            HttpProxy httpProxy)
+            HttpsProxy httpsProxy)
     {
-        super(ImmutableList.of(standard, hydraIdentityProvider, httpProxy));
+        super(standard, hydraIdentityProvider, httpsProxy);
 
         this.binder = requireNonNull(binder, "binder is null");
         this.hydraIdentityProvider = requireNonNull(hydraIdentityProvider, "hydraIdentityProvider is null");
-        requireNonNull(dockerFiles, "dockerFiles is null");
-        this.configDir = dockerFiles.getDockerFilesHostDirectory("conf/environment/singlenode-oauth2-http-proxy/");
+        this.configDir = dockerFiles.getDockerFilesHostDirectory("conf/environment/singlenode-oauth2-authenticated-https-proxy/");
+        this.httpsProxy = requireNonNull(httpsProxy, "httpsProxy is null");
     }
 
     @Override
@@ -62,13 +62,8 @@ public class EnvSinglenodeOauth2HttpProxy
     {
         builder.configureContainer(COORDINATOR, dockerContainer -> {
             dockerContainer
-                    .withCopyFileToContainer(
-                            forHostPath(configDir.getPath("config.properties")),
-                            CONTAINER_TRINO_CONFIG_PROPERTIES)
-                    .withCopyFileToContainer(
-                            forHostPath(configDir.getPath("log.properties")),
-                            CONTAINER_TRINO_ETC + "/log.properties");
-
+                    .withCopyFileToContainer(forHostPath(configDir.getPath("trino")), CONTAINER_TRINO_ETC)
+                    .withCopyFileToContainer(forHostPath(httpsProxy.getTrustStorePath()), CONTAINER_TRINO_ETC + "/cert/truststore.jks");
             binder.exposePort(dockerContainer, 7778);
         });
 
@@ -83,5 +78,8 @@ public class EnvSinglenodeOauth2HttpProxy
         builder.containerDependsOn(COORDINATOR, hydraClientConfig.getLogicalName());
 
         builder.containerDependsOn(COORDINATOR, PROXY);
+        builder.configureContainer(PROXY, proxy -> {
+            proxy.withCopyFileToContainer(forHostPath(configDir.getPath("proxy")), HTTP_PROXY_CONF_DIR);
+        });
     }
 }
