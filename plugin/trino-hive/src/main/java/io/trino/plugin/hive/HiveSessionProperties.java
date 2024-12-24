@@ -103,6 +103,7 @@ public final class HiveSessionProperties
     private static final String PARQUET_WRITER_PAGE_VALUE_COUNT = "parquet_writer_page_value_count";
     private static final String PARQUET_WRITER_BATCH_SIZE = "parquet_writer_batch_size";
     private static final String PARQUET_OPTIMIZED_WRITER_VALIDATION_PERCENTAGE = "parquet_optimized_writer_validation_percentage";
+    private static final String PARQUET_HYBRID_CALENDAR_ENABLED = "parquet_hybrid_calendar_enabled";
     private static final String MAX_SPLIT_SIZE = "max_split_size";
     private static final String MAX_INITIAL_SPLIT_SIZE = "max_initial_split_size";
     private static final String RCFILE_OPTIMIZED_WRITER_VALIDATE = "rcfile_optimized_writer_validate";
@@ -558,7 +559,12 @@ public final class HiveSessionProperties
                         hiveConfig.getHudiCatalogName().orElse(null),
                         // Session-level redirections configuration does not work well with views, as view body is analyzed in context
                         // of a session with properties stripped off. Thus, this property is more of a test-only, or at most POC usefulness.
-                        true));
+                        true),
+                booleanProperty(
+                        PARQUET_HYBRID_CALENDAR_ENABLED,
+                        "Enable using hybrid Calendar to read type Date saved by legacy Hive versions in parquet files",
+                        parquetReaderConfig.isHybridCalendarEnabled(),
+                        false));
     }
 
     @Override
@@ -779,6 +785,11 @@ public final class HiveSessionProperties
         double percentage = session.getProperty(PARQUET_OPTIMIZED_WRITER_VALIDATION_PERCENTAGE, Double.class);
         checkArgument(percentage >= 0.0 && percentage <= 100.0);
         return ThreadLocalRandom.current().nextDouble(100) < percentage;
+    }
+
+    public static boolean isHybridCalendarEnabled(ConnectorSession session)
+    {
+        return session.getProperty(PARQUET_HYBRID_CALENDAR_ENABLED, Boolean.class);
     }
 
     public static DataSize getMaxSplitSize(ConnectorSession session)

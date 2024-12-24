@@ -76,6 +76,7 @@ import static io.trino.parquet.ParquetWriteValidation.WriteChecksumBuilder;
 import static io.trino.parquet.ParquetWriteValidation.WriteChecksumBuilder.createWriteChecksumBuilder;
 import static io.trino.parquet.reader.ListColumnReader.calculateCollectionOffsets;
 import static io.trino.parquet.reader.PageReader.createPageReader;
+import static io.trino.spi.type.DateType.DATE;
 import static java.lang.Math.max;
 import static java.lang.Math.min;
 import static java.lang.Math.toIntExact;
@@ -547,6 +548,14 @@ public class ParquetReader
         else {
             columnChunk = readPrimitive((PrimitiveField) field);
         }
+
+        if (options.isHybridCalendarEnabled()) {
+            if (DATE == field.getType()) {
+//                ValueAdjuster valueAdjuster =
+//                return columnChunk.getBlock()
+            }
+        }
+
         return columnChunk;
     }
 

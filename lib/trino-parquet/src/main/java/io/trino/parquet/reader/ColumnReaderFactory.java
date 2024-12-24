@@ -46,6 +46,7 @@ import org.joda.time.DateTimeZone;
 import java.util.Optional;
 
 import static io.trino.parquet.ParquetEncoding.PLAIN;
+import static io.trino.parquet.reader.decoders.HybridCalendarDecoder.getDateInt32Decoder;
 import static io.trino.parquet.reader.decoders.ValueDecoder.ValueDecodersProvider;
 import static io.trino.parquet.reader.decoders.ValueDecoder.createLevelsDecoder;
 import static io.trino.parquet.reader.flat.BinaryColumnAdapter.BINARY_ADAPTER;
@@ -88,11 +89,13 @@ public final class ColumnReaderFactory
 
     private final DateTimeZone timeZone;
     private final boolean vectorizedDecodingEnabled;
+    private final boolean hybridCalendarEnabled;
 
     public ColumnReaderFactory(DateTimeZone timeZone, ParquetReaderOptions readerOptions)
     {
         this.timeZone = requireNonNull(timeZone, "dateTimeZone is null");
         this.vectorizedDecodingEnabled = readerOptions.isVectorizedDecodingEnabled() && isVectorizedDecodingSupported();
+        this.hybridCalendarEnabled = readerOptions.isHybridCalendarEnabled();
     }
 
     public ColumnReader create(PrimitiveField field, AggregatedMemoryContext aggregatedMemoryContext)
@@ -121,11 +124,16 @@ public final class ColumnReaderFactory
             if (!isIntegerAnnotationAndPrimitive(annotation, primitiveType)) {
                 throw unsupportedException(type, field);
             }
-            return createColumnReader(field, valueDecoders::getShortDecoder, SHORT_ADAPTER, memoryContext);
+            return createColumnReader(field, encoding -> valueDecoders.getShortDecoder(encoding), SHORT_ADAPTER, memoryContext);
         }
         if (DATE.equals(type) && primitiveType == INT32) {
             if (annotation == null || annotation instanceof DateLogicalTypeAnnotation) {
-                return createColumnReader(field, valueDecoders::getInt32Decoder, INT_ADAPTER, memoryContext);
+                if (hybridCalendarEnabled) {
+                    return createColumnReader(field, encoding -> getDateInt32Decoder(valueDecoders.getInt32Decoder(encoding)), INT_ADAPTER, memoryContext);
+                }
+                else {
+                    return createColumnReader(field, valueDecoders::getInt32Decoder, INT_ADAPTER, memoryContext);
+                }
             }
             throw unsupportedException(type, field);
         }
@@ -206,15 +214,21 @@ public final class ColumnReaderFactory
             DateTimeZone readTimeZone = timestampAnnotation.isAdjustedToUTC() ? timeZone : DateTimeZone.UTC;
             if (timestampType.isShort()) {
                 return switch (timestampAnnotation.getUnit()) {
-                    case MILLIS -> createColumnReader(field, encoding -> valueDecoders.getInt64TimestampMillisToShortTimestampDecoder(encoding, readTimeZone), LONG_ADAPTER, memoryContext);
-                    case MICROS -> createColumnReader(field, encoding -> valueDecoders.getInt64TimestampMicrosToShortTimestampDecoder(encoding, readTimeZone), LONG_ADAPTER, memoryContext);
-                    case NANOS -> createColumnReader(field, encoding -> valueDecoders.getInt64TimestampNanosToShortTimestampDecoder(encoding, readTimeZone), LONG_ADAPTER, memoryContext);
+                    case MILLIS ->
+                            createColumnReader(field, encoding -> valueDecoders.getInt64TimestampMillisToShortTimestampDecoder(encoding, readTimeZone), LONG_ADAPTER, memoryContext);
+                    case MICROS ->
+                            createColumnReader(field, encoding -> valueDecoders.getInt64TimestampMicrosToShortTimestampDecoder(encoding, readTimeZone), LONG_ADAPTER, memoryContext);
+                    case NANOS ->
+                            createColumnReader(field, encoding -> valueDecoders.getInt64TimestampNanosToShortTimestampDecoder(encoding, readTimeZone), LONG_ADAPTER, memoryContext);
                 };
             }
             return switch (timestampAnnotation.getUnit()) {
-                case MILLIS -> createColumnReader(field, encoding -> valueDecoders.getInt64TimestampMillisToLongTimestampDecoder(encoding, readTimeZone), FIXED12_ADAPTER, memoryContext);
-                case MICROS -> createColumnReader(field, encoding -> valueDecoders.getInt64TimestampMicrosToLongTimestampDecoder(encoding, readTimeZone), FIXED12_ADAPTER, memoryContext);
-                case NANOS -> createColumnReader(field, encoding -> valueDecoders.getInt64TimestampNanosToLongTimestampDecoder(encoding, readTimeZone), FIXED12_ADAPTER, memoryContext);
+                case MILLIS ->
+                        createColumnReader(field, encoding -> valueDecoders.getInt64TimestampMillisToLongTimestampDecoder(encoding, readTimeZone), FIXED12_ADAPTER, memoryContext);
+                case MICROS ->
+                        createColumnReader(field, encoding -> valueDecoders.getInt64TimestampMicrosToLongTimestampDecoder(encoding, readTimeZone), FIXED12_ADAPTER, memoryContext);
+                case NANOS ->
+                        createColumnReader(field, encoding -> valueDecoders.getInt64TimestampNanosToLongTimestampDecoder(encoding, readTimeZone), FIXED12_ADAPTER, memoryContext);
             };
         }
         if (type instanceof TimestampWithTimeZoneType timestampWithTimeZoneType && primitiveType == INT64) {
@@ -333,7 +347,7 @@ public final class ColumnReaderFactory
     private static boolean isDecimalRescaled(DecimalLogicalTypeAnnotation decimalAnnotation, DecimalType trinoType)
     {
         return decimalAnnotation.getPrecision() != trinoType.getPrecision()
-                || decimalAnnotation.getScale() != trinoType.getScale();
+               || decimalAnnotation.getScale() != trinoType.getScale();
     }
 
     private static boolean isIntegerAnnotation(LogicalTypeAnnotation typeAnnotation)
@@ -344,8 +358,8 @@ public final class ColumnReaderFactory
     private static boolean isZeroScaleShortDecimalAnnotation(LogicalTypeAnnotation typeAnnotation)
     {
         return typeAnnotation instanceof DecimalLogicalTypeAnnotation decimalAnnotation
-                && decimalAnnotation.getScale() == 0
-                && decimalAnnotation.getPrecision() <= Decimals.MAX_SHORT_PRECISION;
+               && decimalAnnotation.getScale() == 0
+               && decimalAnnotation.getPrecision() <= Decimals.MAX_SHORT_PRECISION;
     }
 
     private static boolean isIntegerOrDecimalPrimitive(PrimitiveTypeName primitiveType)

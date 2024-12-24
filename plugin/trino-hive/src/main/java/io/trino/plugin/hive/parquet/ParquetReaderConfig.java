@@ -155,6 +155,19 @@ public class ParquetReaderConfig
         return this;
     }
 
+    @Config("parquet.experimental.hybrid-calendar.enabled")
+    @ConfigDescription("Use hybrid (Julian + Gregorian) Calendar")
+    public ParquetReaderConfig setHybridCalendarEnabled(boolean hybridCalendarEnabled)
+    {
+        options = options.withHybridCalendarEnabled(hybridCalendarEnabled);
+        return this;
+    }
+
+    public boolean isHybridCalendarEnabled()
+    {
+        return options.isHybridCalendarEnabled();
+    }
+
     public boolean isVectorizedDecodingEnabled()
     {
         return options.isVectorizedDecodingEnabled();

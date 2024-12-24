@@ -39,7 +39,8 @@ public class TestParquetReaderConfig
                 .setUseColumnIndex(true)
                 .setUseBloomFilter(true)
                 .setSmallFileThreshold(DataSize.of(3, MEGABYTE))
-                .setVectorizedDecodingEnabled(true));
+                .setVectorizedDecodingEnabled(true)
+                .setHybridCalendarEnabled(false));
     }
 
     @Test
@@ -55,6 +56,7 @@ public class TestParquetReaderConfig
                 .put("parquet.use-bloom-filter", "false")
                 .put("parquet.small-file-threshold", "1kB")
                 .put("parquet.experimental.vectorized-decoding.enabled", "false")
+                .put("parquet.experimental.hybrid-calendar.enabled", "true")
                 .buildOrThrow();
 
         ParquetReaderConfig expected = new ParquetReaderConfig()
@@ -66,7 +68,8 @@ public class TestParquetReaderConfig
                 .setUseColumnIndex(false)
                 .setUseBloomFilter(false)
                 .setSmallFileThreshold(DataSize.of(1, KILOBYTE))
-                .setVectorizedDecodingEnabled(false);
+                .setVectorizedDecodingEnabled(false)
+                .setHybridCalendarEnabled(true);
 
         assertFullMapping(properties, expected);
     }

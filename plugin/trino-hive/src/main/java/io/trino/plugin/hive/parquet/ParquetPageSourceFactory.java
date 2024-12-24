@@ -47,6 +47,7 @@ import io.trino.plugin.hive.ReaderPageSource;
 import io.trino.plugin.hive.Schema;
 import io.trino.plugin.hive.acid.AcidTransaction;
 import io.trino.plugin.hive.coercions.TypeCoercer;
+import io.trino.plugin.hive.util.ValueAdjuster;
 import io.trino.spi.TrinoException;
 import io.trino.spi.connector.ConnectorPageSource;
 import io.trino.spi.connector.ConnectorSession;
@@ -91,6 +92,7 @@ import static io.trino.plugin.hive.HivePageSourceProvider.projectSufficientColum
 import static io.trino.plugin.hive.HiveSessionProperties.getParquetMaxReadBlockRowCount;
 import static io.trino.plugin.hive.HiveSessionProperties.getParquetMaxReadBlockSize;
 import static io.trino.plugin.hive.HiveSessionProperties.getParquetSmallFileThreshold;
+import static io.trino.plugin.hive.HiveSessionProperties.isHybridCalendarEnabled;
 import static io.trino.plugin.hive.HiveSessionProperties.isParquetIgnoreStatistics;
 import static io.trino.plugin.hive.HiveSessionProperties.isParquetUseColumnIndex;
 import static io.trino.plugin.hive.HiveSessionProperties.isParquetVectorizedDecodingEnabled;
@@ -189,7 +191,8 @@ public class ParquetPageSourceFactory
                         .withSmallFileThreshold(getParquetSmallFileThreshold(session))
                         .withUseColumnIndex(isParquetUseColumnIndex(session))
                         .withBloomFilter(useParquetBloomFilter(session))
-                        .withVectorizedDecodingEnabled(isParquetVectorizedDecodingEnabled(session)),
+                        .withVectorizedDecodingEnabled(isParquetVectorizedDecodingEnabled(session))
+                        .withHybridCalendarEnabled(isHybridCalendarEnabled(session)),
                 Optional.empty(),
                 domainCompactionThreshold,
                 OptionalLong.of(estimatedFileSize)));
@@ -439,10 +442,12 @@ public class ParquetPageSourceFactory
             String columnName = useColumnNames ? column.getBaseColumnName() : fileSchema.getFields().get(column.getBaseHiveColumnIndex()).getName();
 
             Optional<TypeCoercer<?, ?>> coercer = Optional.empty();
+            Optional<ValueAdjuster<?>> valueAdjuster = Optional.empty();
             ColumnIO columnIO = lookupColumnByName(messageColumn, columnName);
             if (columnIO != null && columnIO.getType().isPrimitive()) {
                 PrimitiveType primitiveType = columnIO.getType().asPrimitiveType();
                 coercer = createCoercer(primitiveType.getPrimitiveTypeName(), primitiveType.getLogicalTypeAnnotation(), column.getBaseType());
+                valueAdjuster = ValueAdjusters.createValueAdjuster(column.getBaseType());
             }
 
             io.trino.spi.type.Type readType = coercer.map(TypeCoercer::getFromType).orElseGet(column::getBaseType);
@@ -452,12 +457,13 @@ public class ParquetPageSourceFactory
                 pageSourceBuilder.addNullColumn(readType);
                 continue;
             }
+
             parquetColumnFieldsBuilder.add(new Column(columnName, field.get()));
             if (coercer.isPresent()) {
-                pageSourceBuilder.addCoercedColumn(sourceChannel, coercer.get());
+                pageSourceBuilder.addCoercedColumn(sourceChannel, coercer.get(), valueAdjuster);
             }
             else {
-                pageSourceBuilder.addSourceColumn(sourceChannel);
+                pageSourceBuilder.addSourceColumn(sourceChannel, valueAdjuster);
             }
             sourceChannel++;
         }
