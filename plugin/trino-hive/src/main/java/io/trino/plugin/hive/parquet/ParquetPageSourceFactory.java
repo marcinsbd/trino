@@ -129,6 +129,7 @@ public class ParquetPageSourceFactory
     private final ParquetReaderOptions options;
     private final DateTimeZone timeZone;
     private final int domainCompactionThreshold;
+    private final boolean hybridCalendarSupportEnabled;
 
     @Inject
     public ParquetPageSourceFactory(
@@ -142,6 +143,7 @@ public class ParquetPageSourceFactory
         options = config.toParquetReaderOptions();
         timeZone = hiveConfig.getParquetDateTimeZone();
         domainCompactionThreshold = hiveConfig.getDomainCompactionThreshold();
+        hybridCalendarSupportEnabled = hiveConfig.isParquetHybridCalendarSupportEnabled();
     }
 
     public static boolean stripUnnecessaryProperties(String serializationLibraryName)
@@ -189,7 +191,8 @@ public class ParquetPageSourceFactory
                         .withSmallFileThreshold(getParquetSmallFileThreshold(session))
                         .withUseColumnIndex(isParquetUseColumnIndex(session))
                         .withBloomFilter(useParquetBloomFilter(session))
-                        .withVectorizedDecodingEnabled(isParquetVectorizedDecodingEnabled(session)),
+                        .withVectorizedDecodingEnabled(isParquetVectorizedDecodingEnabled(session))
+                        .withUseHybridCalendar(hybridCalendarSupportEnabled),
                 Optional.empty(),
                 domainCompactionThreshold,
                 OptionalLong.of(estimatedFileSize)));
@@ -223,6 +226,8 @@ public class ParquetPageSourceFactory
             ParquetMetadata parquetMetadata = MetadataReader.readFooter(dataSource, parquetWriteValidation);
             FileMetadata fileMetaData = parquetMetadata.getFileMetaData();
             fileSchema = fileMetaData.getSchema();
+
+            boolean writerDateProleptic = isWriterDateProleptic(fileMetaData.getKeyValueMetaData());
 
             Optional<MessageType> message = getParquetMessageType(columns, useColumnNames, fileSchema);
 
@@ -281,7 +286,8 @@ public class ParquetPageSourceFactory
                     // We avoid using disjuncts of parquetPredicate for page pruning in ParquetReader as currently column indexes
                     // are not present in the Parquet files which are read with disjunct predicates.
                     parquetPredicates.size() == 1 ? Optional.of(parquetPredicates.getFirst()) : Optional.empty(),
-                    parquetWriteValidation);
+                    parquetWriteValidation,
+                    writerDateProleptic);
             ConnectorPageSource parquetPageSource = createParquetPageSource(baseColumns, fileSchema, messageColumn, useColumnNames, parquetReaderProvider);
             return new ReaderPageSource(parquetPageSource, readerProjections);
         }
@@ -463,6 +469,16 @@ public class ParquetPageSourceFactory
         }
 
         return pageSourceBuilder.build(parquetReaderProvider.createParquetReader(parquetColumnFieldsBuilder.build()));
+    }
+
+    private static boolean isWriterDateProleptic(Map<String, String> keyValueMetaData)
+    {
+        // Key used by Hive
+        String writerDateProleptic = "writer.date.proleptic";
+        if (keyValueMetaData == null) {
+            return false;
+        }
+        return Boolean.parseBoolean(keyValueMetaData.get(writerDateProleptic));
     }
 
     private static Optional<org.apache.parquet.schema.Type> getBaseColumnParquetType(HiveColumnHandle column, MessageType messageType, boolean useParquetColumnNames)
