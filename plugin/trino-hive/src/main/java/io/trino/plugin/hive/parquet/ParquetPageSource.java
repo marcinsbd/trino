@@ -19,6 +19,7 @@ import io.trino.parquet.ParquetCorruptionException;
 import io.trino.parquet.ParquetDataSourceId;
 import io.trino.parquet.reader.ParquetReader;
 import io.trino.plugin.hive.coercions.TypeCoercer;
+import io.trino.plugin.hive.util.ValueAdjuster;
 import io.trino.spi.Page;
 import io.trino.spi.TrinoException;
 import io.trino.spi.block.Block;
@@ -181,6 +182,18 @@ public class ParquetPageSource
             return this;
         }
 
+        public Builder addCoercedColumn(int sourceChannel, TypeCoercer<?, ?> typeCoercer, ValueAdjuster<?> valueAdjuster)
+        {
+            columns.add(new CoercedColumn(new ValueAdjustedColumn(new SourceColumn(sourceChannel), valueAdjuster), typeCoercer));
+            return this;
+        }
+
+        public Builder addValueAdjustedColumn(int sourceChannel, ValueAdjuster<?> valueAdjuster)
+        {
+            columns.add(new ValueAdjustedColumn(new SourceColumn(sourceChannel), valueAdjuster));
+            return this;
+        }
+
         public ConnectorPageSource build(ParquetReader parquetReader)
         {
             return new ParquetPageSource(parquetReader, this.columns.build());
@@ -295,10 +308,10 @@ public class ParquetPageSource
         }
     }
 
-    private record CoercedColumn(SourceColumn sourceColumn, TypeCoercer<?, ?> typeCoercer)
+    private record CoercedColumn(ColumnAdaptation sourceColumn, TypeCoercer<?, ?> typeCoercer)
             implements ColumnAdaptation
     {
-        private CoercedColumn(SourceColumn sourceColumn, TypeCoercer<?, ?> typeCoercer)
+        private CoercedColumn(ColumnAdaptation sourceColumn, TypeCoercer<?, ?> typeCoercer)
         {
             this.sourceColumn = requireNonNull(sourceColumn, "sourceColumn is null");
             this.typeCoercer = requireNonNull(typeCoercer, "typeCoercer is null");
@@ -318,6 +331,32 @@ public class ParquetPageSource
                     .add("sourceColumn", sourceColumn)
                     .add("fromType", typeCoercer.getFromType())
                     .add("toType", typeCoercer.getToType())
+                    .toString();
+        }
+    }
+
+    private record ValueAdjustedColumn(ColumnAdaptation sourceColumn, ValueAdjuster<?> valueAdjuster)
+            implements ColumnAdaptation
+    {
+        private ValueAdjustedColumn(ColumnAdaptation sourceColumn, ValueAdjuster<?> valueAdjuster)
+        {
+            this.sourceColumn = requireNonNull(sourceColumn, "sourceColumn is null");
+            this.valueAdjuster = requireNonNull(valueAdjuster, "valueAdjustable is null");
+        }
+
+        @Override
+        public Block getBlock(Page sourcePage, long startRowId)
+        {
+            Block block = sourceColumn.getBlock(sourcePage, startRowId);
+            return new LazyBlock(block.getPositionCount(), () -> valueAdjuster.apply(block.getLoadedBlock()));
+        }
+
+        @Override
+        public String toString()
+        {
+            return toStringHelper(this)
+                    .add("sourceColumn", sourceColumn)
+                    .add("forType", valueAdjuster.getForType())
                     .toString();
         }
     }
