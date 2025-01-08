@@ -179,6 +179,7 @@ public class HiveConfig
     private int metadataParallelism = 8;
 
     private boolean parquetHybridCalendarSupportEnabled;
+    private boolean orcHybridCalendarSupportEnabled;
 
     public boolean isSingleStatementWritesOnly()
     {
@@ -1297,5 +1298,18 @@ public class HiveConfig
     public boolean isParquetHybridCalendarSupportEnabled()
     {
         return parquetHybridCalendarSupportEnabled;
+    }
+
+    @Config("hive.orc.hybrid-calendar-support.enabled")
+    @ConfigDescription("Support for reading Date values written in hybrid (Julian + Gregorian) Calendar in Orc")
+    public HiveConfig setOrcHybridCalendarSupportEnabled(boolean orcHybridCalendarSupportEnabled)
+    {
+        this.orcHybridCalendarSupportEnabled = orcHybridCalendarSupportEnabled;
+        return this;
+    }
+
+    public boolean isOrcHybridCalendarSupportEnabled()
+    {
+        return orcHybridCalendarSupportEnabled;
     }
 }

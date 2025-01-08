@@ -21,6 +21,7 @@ import io.airlift.slice.Slices;
 import io.trino.orc.OrcWriteValidation.OrcWriteValidationBuilder;
 import io.trino.orc.OrcWriteValidation.OrcWriteValidationMode;
 import io.trino.orc.OrcWriterStats.FlushReason;
+import io.trino.orc.metadata.CalendarKind;
 import io.trino.orc.metadata.ColumnEncoding;
 import io.trino.orc.metadata.ColumnMetadata;
 import io.trino.orc.metadata.CompressedMetadataWriter;
@@ -112,6 +113,7 @@ public final class OrcWriter
 
     private final List<ColumnWriter> columnWriters;
     private final DictionaryCompressionOptimizer dictionaryCompressionOptimizer;
+    private final OrcWriterOptions.WriterIdentification writerIdentification;
     private int stripeRowCount;
     private int rowGroupRowCount;
     private long bufferedBytes;
@@ -156,6 +158,7 @@ public final class OrcWriter
         this.chunkMaxBytes = Math.max(1, stripeMaxBytes / 2);
         this.stripeMaxRowCount = options.getStripeMaxRowCount();
         this.rowGroupMaxRowCount = options.getRowGroupMaxRowCount();
+        this.writerIdentification = options.getWriterIdentification();
         recordValidation(validation -> validation.setRowGroupMaxRowCount(rowGroupMaxRowCount));
         this.maxCompressionBufferSize = toIntExact(options.getMaxCompressionBufferSize().toBytes());
 
@@ -184,7 +187,8 @@ public final class OrcWriter
                     maxCompressionBufferSize,
                     options.getMaxStringStatisticsLimit(),
                     getBloomFilterBuilder(options, columnNames.get(fieldId)),
-                    options.isShouldCompactMinMax());
+                    options.isShouldCompactMinMax(),
+                    options.getWriterIdentification());
             columnWriters.add(columnWriter);
 
             if (columnWriter instanceof SliceDictionaryColumnWriter) {
@@ -531,7 +535,8 @@ public final class OrcWriter
                 orcTypes,
                 fileStats,
                 userMetadata,
-                Optional.empty()); // writer id will be set by MetadataWriter
+                Optional.empty(), // writer id will be set by MetadataWriter
+                getCalendarKind());
 
         closedStripes.clear();
         closedStripesRetainedBytes = 0;
@@ -544,6 +549,14 @@ public final class OrcWriter
         outputData.add(createDataOutput(postscriptSlice));
         outputData.add(createDataOutput(Slices.wrappedBuffer(UnsignedBytes.checkedCast(postscriptSlice.length()))));
         return outputData;
+    }
+
+    private CalendarKind getCalendarKind()
+    {
+        return switch (writerIdentification) {
+            case LEGACY_HIVE_COMPATIBLE -> CalendarKind.JULIAN_GREGORIAN; // till now was UNKNOWN ?? what should be now?
+            case TRINO -> CalendarKind.PROLEPTIC_GREGORIAN;
+        };
     }
 
     private void recordValidation(Consumer<OrcWriteValidationBuilder> task)

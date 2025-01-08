@@ -28,8 +28,10 @@ import io.trino.orc.OrcReader.FieldMapperFactory;
 import io.trino.orc.OrcWriteValidation.StatisticsValidation;
 import io.trino.orc.OrcWriteValidation.WriteChecksum;
 import io.trino.orc.OrcWriteValidation.WriteChecksumBuilder;
+import io.trino.orc.metadata.CalendarKind;
 import io.trino.orc.metadata.ColumnEncoding;
 import io.trino.orc.metadata.ColumnMetadata;
+import io.trino.orc.metadata.Footer;
 import io.trino.orc.metadata.MetadataReader;
 import io.trino.orc.metadata.OrcType;
 import io.trino.orc.metadata.PostScript.HiveWriterVersion;
@@ -52,7 +54,6 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.OptionalInt;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
@@ -130,21 +131,16 @@ public class OrcRecordReader
             List<Type> readTypes,
             List<OrcReader.ProjectedLayout> readLayouts,
             OrcPredicate predicate,
-            long numberOfRows,
-            List<StripeInformation> fileStripes,
-            Optional<ColumnMetadata<ColumnStatistics>> fileStats,
+            Footer footer,
             List<Optional<StripeStatistics>> stripeStats,
             OrcDataSource orcDataSource,
             long splitOffset,
             long splitLength,
-            ColumnMetadata<OrcType> orcTypes,
             Optional<OrcDecompressor> decompressor,
-            OptionalInt rowsInRowGroup,
             DateTimeZone legacyFileTimeZone,
             HiveWriterVersion hiveWriterVersion,
             MetadataReader metadataReader,
             OrcReaderOptions options,
-            Map<String, Slice> userMetadata,
             AggregatedMemoryContext memoryUsage,
             Optional<OrcWriteValidation> writeValidation,
             int initialBatchSize,
@@ -159,12 +155,15 @@ public class OrcRecordReader
         requireNonNull(readLayouts, "readLayouts is null");
         checkArgument(readColumns.size() == readLayouts.size(), "readColumns and readLayouts must have the same size");
         requireNonNull(predicate, "predicate is null");
+        requireNonNull(footer, "footer is null");
+        List<StripeInformation> fileStripes = footer.getStripes();
         requireNonNull(fileStripes, "fileStripes is null");
         requireNonNull(stripeStats, "stripeStats is null");
         requireNonNull(orcDataSource, "orcDataSource is null");
-        this.orcTypes = requireNonNull(orcTypes, "orcTypes is null");
+        this.orcTypes = requireNonNull(footer.getTypes(), "orcTypes is null");
         requireNonNull(decompressor, "decompressor is null");
         requireNonNull(legacyFileTimeZone, "legacyFileTimeZone is null");
+        Map<String, Slice> userMetadata = footer.getUserMetadata();
         requireNonNull(userMetadata, "userMetadata is null");
         requireNonNull(memoryUsage, "memoryUsage is null");
         requireNonNull(exceptionTransform, "exceptionTransform is null");
@@ -199,7 +198,9 @@ public class OrcRecordReader
         Optional<Long> endRowPosition = Optional.empty();
         ImmutableList.Builder<StripeInformation> stripes = ImmutableList.builder();
         ImmutableList.Builder<Long> stripeFilePositions = ImmutableList.builder();
-        if (fileStats.isEmpty() || predicate.matches(numberOfRows, fileStats.get())) {
+
+        Optional<ColumnMetadata<ColumnStatistics>> fileStats = footer.getFileStats();
+        if (fileStats.isEmpty() || predicate.matches(footer.getNumberOfRows(), fileStats.get())) {
             // select stripes that start within the specified split
             for (StripeInfo info : stripeInfos) {
                 StripeInformation stripe = info.getStripe();
@@ -253,7 +254,7 @@ public class OrcRecordReader
                 decompressor,
                 orcTypes,
                 ImmutableSet.copyOf(readColumns),
-                rowsInRowGroup,
+                footer.getRowsInRowGroup(),
                 predicate,
                 hiveWriterVersion,
                 metadataReader,
@@ -265,7 +266,8 @@ public class OrcRecordReader
                 readLayouts,
                 streamReadersMemoryContext,
                 blockFactory,
-                fieldMapperFactory);
+                fieldMapperFactory,
+                footer.getCalendar());
 
         currentBytesPerCell = new long[columnReaders.length];
         maxBytesPerCell = new long[columnReaders.length];
@@ -603,7 +605,8 @@ public class OrcRecordReader
             List<OrcReader.ProjectedLayout> readLayouts,
             AggregatedMemoryContext memoryContext,
             OrcBlockFactory blockFactory,
-            FieldMapperFactory fieldMapperFactory)
+            FieldMapperFactory fieldMapperFactory,
+            CalendarKind calendar)
             throws OrcCorruptionException
     {
         ColumnReader[] columnReaders = new ColumnReader[columns.size()];
@@ -611,7 +614,7 @@ public class OrcRecordReader
             Type readType = readTypes.get(columnIndex);
             OrcColumn column = columns.get(columnIndex);
             OrcReader.ProjectedLayout projectedLayout = readLayouts.get(columnIndex);
-            columnReaders[columnIndex] = createColumnReader(readType, column, projectedLayout, memoryContext, blockFactory, fieldMapperFactory);
+            columnReaders[columnIndex] = createColumnReader(readType, column, projectedLayout, memoryContext, blockFactory, fieldMapperFactory, calendar);
         }
         return columnReaders;
     }

@@ -19,6 +19,7 @@ import io.trino.orc.OrcColumn;
 import io.trino.orc.OrcCorruptionException;
 import io.trino.orc.OrcReader;
 import io.trino.orc.OrcReader.FieldMapperFactory;
+import io.trino.orc.metadata.CalendarKind;
 import io.trino.orc.metadata.OrcType;
 import io.trino.spi.type.TimeType;
 import io.trino.spi.type.Type;
@@ -44,7 +45,8 @@ public final class ColumnReaders
             OrcReader.ProjectedLayout projectedLayout,
             AggregatedMemoryContext memoryContext,
             OrcBlockFactory blockFactory,
-            FieldMapperFactory fieldMapperFactory)
+            FieldMapperFactory fieldMapperFactory,
+            CalendarKind calendar)
             throws OrcCorruptionException
     {
         OrcType.OrcTypeKind orcTypeKind = column.getColumnType().getOrcTypeKind();
@@ -72,16 +74,17 @@ public final class ColumnReaders
                 }
                 yield new ByteColumnReader(type, column, memoryContext.newLocalMemoryContext(ColumnReaders.class.getSimpleName()));
             }
-            case SHORT, INT, LONG, DATE -> new LongColumnReader(type, column, memoryContext.newLocalMemoryContext(ColumnReaders.class.getSimpleName()));
+            case SHORT, INT, LONG -> new LongColumnReader(type, column, memoryContext.newLocalMemoryContext(ColumnReaders.class.getSimpleName()));
+            case DATE -> new DateColumnReader(type, column, memoryContext.newLocalMemoryContext(ColumnReaders.class.getSimpleName()), calendar);
             case FLOAT -> new FloatColumnReader(type, column, memoryContext.newLocalMemoryContext(ColumnReaders.class.getSimpleName()));
             case DOUBLE -> new DoubleColumnReader(type, column, memoryContext.newLocalMemoryContext(ColumnReaders.class.getSimpleName()));
             case BINARY, STRING, VARCHAR, CHAR -> new SliceColumnReader(type, column, memoryContext);
             case TIMESTAMP, TIMESTAMP_INSTANT -> new TimestampColumnReader(type, column, memoryContext.newLocalMemoryContext(ColumnReaders.class.getSimpleName()));
-            case LIST -> new ListColumnReader(type, column, memoryContext, blockFactory, fieldMapperFactory);
-            case STRUCT -> new StructColumnReader(type, column, projectedLayout, memoryContext, blockFactory, fieldMapperFactory);
-            case MAP -> new MapColumnReader(type, column, memoryContext, blockFactory, fieldMapperFactory);
+            case LIST -> new ListColumnReader(type, column, memoryContext, blockFactory, fieldMapperFactory, calendar);
+            case STRUCT -> new StructColumnReader(type, column, projectedLayout, memoryContext, blockFactory, fieldMapperFactory, calendar);
+            case MAP -> new MapColumnReader(type, column, memoryContext, blockFactory, fieldMapperFactory, calendar);
             case DECIMAL -> new DecimalColumnReader(type, column, memoryContext.newLocalMemoryContext(ColumnReaders.class.getSimpleName()));
-            case UNION -> new UnionColumnReader(type, column, memoryContext, blockFactory, fieldMapperFactory);
+            case UNION -> new UnionColumnReader(type, column, memoryContext, blockFactory, fieldMapperFactory, calendar);
         };
     }
 }

@@ -107,7 +107,6 @@ import static java.util.Objects.requireNonNull;
 import static java.util.function.Function.identity;
 import static java.util.stream.Collectors.mapping;
 import static java.util.stream.Collectors.toList;
-import static java.util.stream.Collectors.toUnmodifiableList;
 
 public class OrcPageSourceFactory
         implements HivePageSourceFactory
@@ -118,6 +117,7 @@ public class OrcPageSourceFactory
     private final FileFormatDataSourceStats stats;
     private final DateTimeZone legacyTimeZone;
     private final int domainCompactionThreshold;
+    private final boolean hybridCalendarSupportEnabled;
 
     @Inject
     public OrcPageSourceFactory(
@@ -131,7 +131,8 @@ public class OrcPageSourceFactory
                 fileSystemFactory,
                 stats,
                 hiveConfig.getOrcLegacyDateTimeZone(),
-                hiveConfig.getDomainCompactionThreshold());
+                hiveConfig.getDomainCompactionThreshold(),
+                hiveConfig.isOrcHybridCalendarSupportEnabled());
     }
 
     public OrcPageSourceFactory(
@@ -140,7 +141,7 @@ public class OrcPageSourceFactory
             FileFormatDataSourceStats stats,
             DateTimeZone legacyTimeZone)
     {
-        this(orcReaderOptions, fileSystemFactory, stats, legacyTimeZone, 0);
+        this(orcReaderOptions, fileSystemFactory, stats, legacyTimeZone, 0, false);
     }
 
     public OrcPageSourceFactory(
@@ -148,13 +149,15 @@ public class OrcPageSourceFactory
             TrinoFileSystemFactory fileSystemFactory,
             FileFormatDataSourceStats stats,
             DateTimeZone legacyTimeZone,
-            int domainCompactionThreshold)
+            int domainCompactionThreshold,
+            boolean hybridCalendarSupportEnabled)
     {
         this.orcReaderOptions = requireNonNull(orcReaderOptions, "orcReaderOptions is null");
         this.stats = requireNonNull(stats, "stats is null");
         this.legacyTimeZone = legacyTimeZone;
         this.domainCompactionThreshold = domainCompactionThreshold;
         this.fileSystemFactory = requireNonNull(fileSystemFactory, "fileSystemFactory is null");
+        this.hybridCalendarSupportEnabled = hybridCalendarSupportEnabled;
     }
 
     public static boolean stripUnnecessaryProperties(String serializationLibraryName)
@@ -188,7 +191,7 @@ public class OrcPageSourceFactory
         if (readerColumns.isPresent()) {
             readerColumnHandles = readerColumns.get().get().stream()
                     .map(HiveColumnHandle.class::cast)
-                    .collect(toUnmodifiableList());
+                    .toList();
         }
 
         ConnectorPageSource orcPageSource = createOrcPageSource(
@@ -212,7 +215,8 @@ public class OrcPageSourceFactory
                         .withMaxReadBlockSize(getOrcMaxReadBlockSize(session))
                         .withLazyReadSmallRanges(getOrcLazyReadSmallRanges(session))
                         .withNestedLazy(isOrcNestedLazy(session))
-                        .withBloomFiltersEnabled(isOrcBloomFiltersEnabled(session)),
+                        .withBloomFiltersEnabled(isOrcBloomFiltersEnabled(session))
+                        .withHybridCalendarEnabled(hybridCalendarSupportEnabled),
                 acidInfo,
                 bucketNumber,
                 originalFile,

@@ -29,6 +29,7 @@ public class OrcReaderOptions
     private static final boolean DEFAULT_LAZY_READ_SMALL_RANGES = true;
     private static final boolean DEFAULT_NESTED_LAZY = true;
     private static final boolean DEFAULT_READ_LEGACY_SHORT_ZONE_ID = false;
+    private static final boolean DEFAULT_HYBRID_CALENDAR_ENABLED = false;
 
     private final boolean bloomFiltersEnabled;
 
@@ -40,6 +41,7 @@ public class OrcReaderOptions
     private final boolean lazyReadSmallRanges;
     private final boolean nestedLazy;
     private final boolean readLegacyShortZoneId;
+    private final boolean hybridCalendarEnabled;
 
     public OrcReaderOptions()
     {
@@ -52,7 +54,8 @@ public class OrcReaderOptions
                 DEFAULT_MAX_BLOCK_SIZE,
                 DEFAULT_LAZY_READ_SMALL_RANGES,
                 DEFAULT_NESTED_LAZY,
-                DEFAULT_READ_LEGACY_SHORT_ZONE_ID);
+                DEFAULT_READ_LEGACY_SHORT_ZONE_ID,
+                DEFAULT_HYBRID_CALENDAR_ENABLED);
     }
 
     private OrcReaderOptions(
@@ -64,7 +67,8 @@ public class OrcReaderOptions
             DataSize maxBlockSize,
             boolean lazyReadSmallRanges,
             boolean nestedLazy,
-            boolean readLegacyShortZoneId)
+            boolean readLegacyShortZoneId,
+            boolean hybridCalendarEnabled)
     {
         this.maxMergeDistance = requireNonNull(maxMergeDistance, "maxMergeDistance is null");
         this.maxBufferSize = requireNonNull(maxBufferSize, "maxBufferSize is null");
@@ -75,6 +79,7 @@ public class OrcReaderOptions
         this.bloomFiltersEnabled = bloomFiltersEnabled;
         this.nestedLazy = nestedLazy;
         this.readLegacyShortZoneId = readLegacyShortZoneId;
+        this.hybridCalendarEnabled = hybridCalendarEnabled;
     }
 
     public boolean isBloomFiltersEnabled()
@@ -122,10 +127,22 @@ public class OrcReaderOptions
         return readLegacyShortZoneId;
     }
 
+    public boolean isHybridCalendarEnabled()
+    {
+        return hybridCalendarEnabled;
+    }
+
     public OrcReaderOptions withBloomFiltersEnabled(boolean bloomFiltersEnabled)
     {
         return new Builder(this)
                 .withBloomFiltersEnabled(bloomFiltersEnabled)
+                .build();
+    }
+
+    public OrcReaderOptions withHybridCalendarEnabled(boolean hybridCalendarEnabled)
+    {
+        return new Builder(this)
+                .withHybridCalendarEnabled(hybridCalendarEnabled)
                 .build();
     }
 
@@ -201,6 +218,7 @@ public class OrcReaderOptions
         private boolean lazyReadSmallRanges;
         private boolean nestedLazy;
         private boolean readLegacyShortZoneId;
+        private boolean hybridCalendarEnabled;
 
         private Builder(OrcReaderOptions orcReaderOptions)
         {
@@ -214,6 +232,7 @@ public class OrcReaderOptions
             this.lazyReadSmallRanges = orcReaderOptions.lazyReadSmallRanges;
             this.nestedLazy = orcReaderOptions.nestedLazy;
             this.readLegacyShortZoneId = orcReaderOptions.readLegacyShortZoneId;
+            this.hybridCalendarEnabled = orcReaderOptions.hybridCalendarEnabled;
         }
 
         public Builder withBloomFiltersEnabled(boolean bloomFiltersEnabled)
@@ -270,6 +289,12 @@ public class OrcReaderOptions
             return this;
         }
 
+        public Builder withHybridCalendarEnabled(boolean hybridCalendarEnabled)
+        {
+            this.hybridCalendarEnabled = hybridCalendarEnabled;
+            return this;
+        }
+
         private OrcReaderOptions build()
         {
             return new OrcReaderOptions(
@@ -281,7 +306,8 @@ public class OrcReaderOptions
                     maxBlockSize,
                     lazyReadSmallRanges,
                     nestedLazy,
-                    readLegacyShortZoneId);
+                    readLegacyShortZoneId,
+                    hybridCalendarEnabled);
         }
     }
 }

@@ -23,6 +23,7 @@ import io.trino.orc.OrcCorruptionException;
 import io.trino.orc.OrcReader;
 import io.trino.orc.OrcReader.FieldMapper;
 import io.trino.orc.OrcReader.FieldMapperFactory;
+import io.trino.orc.metadata.CalendarKind;
 import io.trino.orc.metadata.ColumnEncoding;
 import io.trino.orc.metadata.ColumnMetadata;
 import io.trino.orc.stream.BooleanInputStream;
@@ -84,7 +85,8 @@ public class StructColumnReader
             OrcReader.ProjectedLayout readLayout,
             AggregatedMemoryContext memoryContext,
             OrcBlockFactory blockFactory,
-            FieldMapperFactory fieldMapperFactory)
+            FieldMapperFactory fieldMapperFactory,
+            CalendarKind calendar)
             throws OrcCorruptionException
     {
         requireNonNull(type, "type is null");
@@ -116,7 +118,8 @@ public class StructColumnReader
                                     fieldLayout,
                                     memoryContext,
                                     blockFactory,
-                                    fieldMapperFactory));
+                                    fieldMapperFactory,
+                                    calendar));
                 }
             }
         }

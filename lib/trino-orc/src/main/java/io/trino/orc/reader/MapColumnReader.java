@@ -19,6 +19,7 @@ import io.trino.orc.OrcBlockFactory;
 import io.trino.orc.OrcColumn;
 import io.trino.orc.OrcCorruptionException;
 import io.trino.orc.OrcReader.FieldMapperFactory;
+import io.trino.orc.metadata.CalendarKind;
 import io.trino.orc.metadata.ColumnEncoding;
 import io.trino.orc.metadata.ColumnMetadata;
 import io.trino.orc.stream.BooleanInputStream;
@@ -74,7 +75,7 @@ public class MapColumnReader
 
     private boolean rowGroupOpen;
 
-    public MapColumnReader(Type type, OrcColumn column, AggregatedMemoryContext memoryContext, OrcBlockFactory blockFactory, FieldMapperFactory fieldMapperFactory)
+    public MapColumnReader(Type type, OrcColumn column, AggregatedMemoryContext memoryContext, OrcBlockFactory blockFactory, FieldMapperFactory fieldMapperFactory, CalendarKind calendar)
             throws OrcCorruptionException
     {
         requireNonNull(type, "type is null");
@@ -89,14 +90,14 @@ public class MapColumnReader
                 fullyProjectedLayout(),
                 memoryContext,
                 blockFactory,
-                fieldMapperFactory);
+                fieldMapperFactory, calendar);
         this.valueColumnReader = createColumnReader(
                 this.type.getValueType(),
                 column.getNestedColumns().get(1),
                 fullyProjectedLayout(),
                 memoryContext,
                 blockFactory,
-                fieldMapperFactory);
+                fieldMapperFactory, calendar);
     }
 
     @Override
