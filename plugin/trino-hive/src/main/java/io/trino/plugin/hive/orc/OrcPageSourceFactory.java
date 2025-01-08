@@ -32,6 +32,7 @@ import io.trino.orc.OrcReaderOptions;
 import io.trino.orc.OrcRecordReader;
 import io.trino.orc.TupleDomainOrcPredicate;
 import io.trino.orc.TupleDomainOrcPredicate.TupleDomainOrcPredicateBuilder;
+import io.trino.orc.metadata.CalendarKind;
 import io.trino.orc.metadata.OrcType.OrcTypeKind;
 import io.trino.plugin.base.metrics.FileFormatDataSourceStats;
 import io.trino.plugin.hive.AcidInfo;
@@ -46,6 +47,8 @@ import io.trino.plugin.hive.acid.AcidSchema;
 import io.trino.plugin.hive.acid.AcidTransaction;
 import io.trino.plugin.hive.coercions.TypeCoercer;
 import io.trino.plugin.hive.orc.OrcPageSource.ColumnAdaptation;
+import io.trino.plugin.hive.util.ValueAdjuster;
+import io.trino.plugin.hive.util.ValueAdjusters;
 import io.trino.spi.TrinoException;
 import io.trino.spi.connector.ConnectorPageSource;
 import io.trino.spi.connector.ConnectorSession;
@@ -278,6 +281,7 @@ public class OrcPageSourceFactory
             if (!originalFile && acidInfo.isPresent() && !acidInfo.get().isOrcAcidVersionValidated()) {
                 validateOrcAcidVersion(path, reader);
             }
+            boolean convertDateToProleptic = reader.getFooter().getCalendar().equals(CalendarKind.JULIAN_GREGORIAN);
 
             List<OrcColumn> fileColumns = reader.getRootColumn().getNestedColumns();
             int actualColumnCount = columns.size() + (isFullAcid ? 3 : 0);
@@ -363,9 +367,21 @@ public class OrcPageSourceFactory
                 if (orcColumn != null) {
                     int sourceIndex = fileReadColumns.size();
                     Optional<TypeCoercer<?, ?>> coercer = createCoercer(orcColumn.getColumnType(), orcColumn.getNestedColumns(), readType);
-                    if (coercer.isPresent()) {
+                    Optional<ValueAdjuster<?>> valueAdjuster = Optional.empty();
+                    if (convertDateToProleptic) {
+                        valueAdjuster = ValueAdjusters.createValueAdjuster(column.getBaseType());
+                    }
+                    if (coercer.isPresent() && valueAdjuster.isPresent()) {
+                        fileReadTypes.add(coercer.get().getFromType());
+                        columnAdaptations.add(ColumnAdaptation.coercedColumn(sourceIndex, coercer.get(), valueAdjuster.get()));
+                    }
+                    else if (coercer.isPresent()) {
                         fileReadTypes.add(coercer.get().getFromType());
                         columnAdaptations.add(ColumnAdaptation.coercedColumn(sourceIndex, coercer.get()));
+                    }
+                    else if (valueAdjuster.isPresent()) {
+                        fileReadTypes.add(valueAdjuster.get().getForType());
+                        columnAdaptations.add(ColumnAdaptation.valueAdjustedColumn(sourceIndex, valueAdjuster.get()));
                     }
                     else {
                         columnAdaptations.add(ColumnAdaptation.sourceColumn(sourceIndex));
@@ -483,7 +499,7 @@ public class OrcPageSourceFactory
             throw new TrinoException(
                     NOT_SUPPORTED,
                     format("Hive transactional tables are supported since Hive 3.0. Expected `hive.acid.version` in ORC metadata in %s to be >=2 but was %s. " +
-                                    "If you have upgraded from an older version of Hive, make sure a major compaction has been run at least once after the upgrade.",
+                           "If you have upgraded from an older version of Hive, make sure a major compaction has been run at least once after the upgrade.",
                             path,
                             hiveAcidVersion.map(String::valueOf).orElse("<empty>")));
         }
