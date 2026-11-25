@@ -17,6 +17,7 @@ import com.google.common.collect.ImmutableList;
 import io.trino.tests.product.launcher.env.EnvironmentConfig;
 import io.trino.tests.product.launcher.env.environment.EnvMultinode;
 import io.trino.tests.product.launcher.env.environment.EnvSinglenodeHdfsImpersonation;
+import io.trino.tests.product.launcher.env.environment.EnvSinglenodeHiveViewFs;
 import io.trino.tests.product.launcher.env.environment.EnvSinglenodeKerberosHdfsImpersonation;
 import io.trino.tests.product.launcher.env.environment.EnvSinglenodeKerberosHdfsNoImpersonation;
 import io.trino.tests.product.launcher.env.environment.EnvSinglenodeKerberosHiveNoImpersonationWithCredentialCache;
@@ -32,6 +33,7 @@ import static io.trino.tests.product.TestGroups.HDFS_IMPERSONATION;
 import static io.trino.tests.product.TestGroups.HDFS_NO_IMPERSONATION;
 import static io.trino.tests.product.TestGroups.HIVE_FILE_HEADER;
 import static io.trino.tests.product.TestGroups.HIVE_KERBEROS;
+import static io.trino.tests.product.TestGroups.HIVE_VIEWFS;
 import static io.trino.tests.product.TestGroups.STORAGE_FORMATS;
 import static io.trino.tests.product.launcher.suite.SuiteTestRun.testOnEnvironment;
 
@@ -59,6 +61,9 @@ public class Suite2
                         .build(),
                 testOnEnvironment(EnvSinglenodeKerberosHdfsImpersonation.class)
                         .withGroups(CONFIGURED_FEATURES, STORAGE_FORMATS, CLI, HDFS_IMPERSONATION, AUTHORIZATION, HIVE_FILE_HEADER, HIVE_KERBEROS)
+                        .build(),
+                testOnEnvironment(EnvSinglenodeHiveViewFs.class)
+                        .withGroups(CONFIGURED_FEATURES, HIVE_VIEWFS)
                         .build());
     }
 }

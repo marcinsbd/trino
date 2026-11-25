@@ -78,6 +78,7 @@ public final class TestGroups
     public static final String KAFKA = "kafka";
     public static final String KAFKA_CONFLUENT_LICENSE = "kafka_confluent_license";
     public static final String TWO_HIVES = "two_hives";
+    public static final String HIVE_VIEWFS = "hive_viewfs";
     public static final String ICEBERG = "iceberg";
     public static final String ICEBERG_GCS = "iceberg_gcs";
     public static final String ICEBERG_AZURE = "iceberg_azure";

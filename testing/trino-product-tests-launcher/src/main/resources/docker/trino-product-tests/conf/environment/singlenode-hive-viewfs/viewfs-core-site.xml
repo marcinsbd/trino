@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <!-- Overload hdfs:// with ViewFS (ViewFileSystemOverloadScheme) -->
+    <property>
+        <name>fs.hdfs.impl</name>
+        <value>org.apache.hadoop.hdfs.ViewDistributedFileSystem</value>
+    </property>
+    <property>
+        <name>fs.viewfs.overload.scheme.target.hdfs.impl</name>
+        <value>org.apache.hadoop.hdfs.DistributedFileSystem</value>
+    </property>
+    <!-- The overload scheme uses the URI host (port ignored) as the mount table name -->
+    <property>
+        <name>fs.viewfs.mounttable.hadoop-master.link./tmp/viewfs/s3_data</name>
+        <value>s3a://viewfs-bucket/s3_data</value>
+    </property>
+    <property>
+        <name>fs.viewfs.mounttable.hadoop-master.linkFallback</name>
+        <value>hdfs://hadoop-master:9000/</value>
+    </property>
+
+    <!-- s3a client settings; fs.viewfs.overload.scheme.target.s3a.impl is deliberately unset -->
+    <property>
+        <name>fs.s3a.endpoint</name>
+        <value>http://minio:9080</value>
+    </property>
+    <property>
+        <name>fs.s3a.access.key</name>
+        <value>minio-access-key</value>
+    </property>
+    <property>
+        <name>fs.s3a.secret.key</name>
+        <value>minio-secret-key</value>
+    </property>
+    <property>
+        <name>fs.s3a.path.style.access</name>
+        <value>true</value>
+    </property>
+    <property>
+        <name>fs.s3a.connection.ssl.enabled</name>
+        <value>false</value>
+    </property>
+</configuration>
