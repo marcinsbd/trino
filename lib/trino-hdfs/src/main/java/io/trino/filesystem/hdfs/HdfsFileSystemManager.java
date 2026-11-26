@@ -20,6 +20,7 @@ import io.airlift.bootstrap.LifeCycleManager;
 import io.airlift.configuration.ConfigPropertyMetadata;
 import io.trino.filesystem.TrinoFileSystemFactory;
 import io.trino.hdfs.HdfsModule;
+import io.trino.hdfs.s3.HiveS3Module;
 import io.trino.hdfs.authentication.HdfsAuthenticationModule;
 import io.trino.plugin.base.ConnectorContextModule;
 import io.trino.plugin.base.jmx.ConnectorObjectNameGeneratorModule;
@@ -54,6 +55,8 @@ public final class HdfsFileSystemManager
         modules.add(new HdfsModule());
         modules.add(new HdfsAuthenticationModule());
         modules.add(new ConnectorContextModule(catalogName, context));
+        // restore legacy S3 file system, which registers TrinoS3FileSystem as fs.s3a.impl
+        modules.add(new HiveS3Module());
 
         bootstrap = new Bootstrap("io.trino.bootstrap.catalog." + catalogName, modules)
                 .doNotInitializeLogging()

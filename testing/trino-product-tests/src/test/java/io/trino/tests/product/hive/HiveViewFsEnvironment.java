@@ -88,6 +88,13 @@ public class HiveViewFsEnvironment
                         .put("fs.hadoop.enabled", "true")
                         .put("hive.config.resources", "/etc/trino/hdfs-site.xml," + VIEWFS_CORE_SITE)
                         .put("hive.non-managed-table-writes-enabled", "true")
+                        // legacy S3 file system, registered as fs.s3a.impl for the ViewFS s3a:// mount link
+                        .put("hive.s3.aws-access-key", Floci.FLOCI_ACCESS_KEY)
+                        .put("hive.s3.aws-secret-key", Floci.FLOCI_SECRET_KEY)
+                        .put("hive.s3.endpoint", "http://floci:" + Floci.FLOCI_PORT)
+                        .put("hive.s3.region", Floci.FLOCI_REGION)
+                        .put("hive.s3.path-style-access", "true")
+                        .put("hive.s3.ssl.enabled", "false")
                         .build())
                 .withCatalog("tpch", Map.of("connector.name", "tpch"))
                 .build();
