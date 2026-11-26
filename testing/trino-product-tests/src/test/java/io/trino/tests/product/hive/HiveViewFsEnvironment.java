@@ -88,6 +88,8 @@ public class HiveViewFsEnvironment
                         .put("fs.hadoop.enabled", "true")
                         .put("hive.config.resources", "/etc/trino/hdfs-site.xml," + VIEWFS_CORE_SITE)
                         .put("hive.non-managed-table-writes-enabled", "true")
+                        // Native S3 serves the s3a:// mount link through the Hadoop file system bridge
+                        .withFlociS3()
                         .build())
                 .withCatalog("tpch", Map.of("connector.name", "tpch"))
                 .build();
