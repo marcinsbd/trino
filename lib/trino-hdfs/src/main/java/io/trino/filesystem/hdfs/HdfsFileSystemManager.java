@@ -13,6 +13,7 @@
  */
 package io.trino.filesystem.hdfs;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.inject.Injector;
 import com.google.inject.Module;
 import io.airlift.bootstrap.Bootstrap;
@@ -91,9 +92,22 @@ public final class HdfsFileSystemManager
     {
         checkState(lifecycleManager == null, "Already created");
         NativeFileSystemRegistry.register(nativeFileSystemRegistryId, nativeFileSystemFactories);
-        Injector injector = bootstrap.initialize();
-        lifecycleManager = injector.getInstance(LifeCycleManager.class);
-        return injector.getInstance(HdfsFileSystemFactory.class);
+        try {
+            Injector injector = bootstrap.initialize();
+            lifecycleManager = injector.getInstance(LifeCycleManager.class);
+            return injector.getInstance(HdfsFileSystemFactory.class);
+        }
+        catch (RuntimeException | Error e) {
+            // stop() is not called when creation fails, so do not keep the factories registered
+            NativeFileSystemRegistry.unregister(nativeFileSystemRegistryId);
+            throw e;
+        }
+    }
+
+    @VisibleForTesting
+    String nativeFileSystemRegistryId()
+    {
+        return nativeFileSystemRegistryId;
     }
 
     public void stop()

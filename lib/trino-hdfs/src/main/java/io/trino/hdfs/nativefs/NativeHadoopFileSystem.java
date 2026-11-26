@@ -24,6 +24,7 @@ import io.trino.spi.security.ConnectorIdentity;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FSDataOutputStream;
+import org.apache.hadoop.fs.FileAlreadyExistsException;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
@@ -37,6 +38,7 @@ import java.net.URI;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Hadoop {@link FileSystem} backed by a native Trino {@link TrinoFileSystem}.
@@ -103,14 +105,21 @@ public class NativeHadoopFileSystem
             throws IOException
     {
         Location location = location(path);
-        if (isFile(location)) {
-            if (!overwrite) {
-                throw new IOException("File already exists: " + path);
-            }
-            fileSystem.deleteFile(location);
+        if (!overwrite && isFile(location)) {
+            throw new FileAlreadyExistsException("File already exists: " + path);
         }
         TrinoOutputFile outputFile = fileSystem.newOutputFile(location);
-        return new FSDataOutputStream(outputFile.create(), statistics);
+        try {
+            return new FSDataOutputStream(outputFile.create(), statistics);
+        }
+        catch (java.nio.file.FileAlreadyExistsException e) {
+            // File systems that do not overwrite on create, so overwrite is only paid for when the file exists
+            if (!overwrite) {
+                throw new FileAlreadyExistsException("File already exists: " + path);
+            }
+            fileSystem.deleteFile(location);
+            return new FSDataOutputStream(outputFile.create(), statistics);
+        }
     }
 
     @Override
@@ -133,11 +142,19 @@ public class NativeHadoopFileSystem
             throws IOException
     {
         Location location = location(path);
+        if (location.path().isEmpty()) {
+            throw new IOException("Cannot delete the root of the file system: " + path);
+        }
         if (isFile(location)) {
             fileSystem.deleteFile(location);
             return true;
         }
-        if (!recursive && fileSystem.listFiles(location).hasNext()) {
+        DirectoryListing listing = fileSystem.listDirectory(location);
+        if (listing.isEmpty() && !isDirectory(location)) {
+            // Hadoop contract: deleting a missing path returns false
+            return false;
+        }
+        if (!recursive && !listing.isEmpty()) {
             throw new IOException("Directory is not empty: " + path);
         }
         fileSystem.deleteDirectory(location);
@@ -164,9 +181,9 @@ public class NativeHadoopFileSystem
         }
 
         // Nothing below the location: it is a file, an empty directory, or missing
-        if (isFile(location)) {
-            TrinoInputFile inputFile = fileSystem.newInputFile(location);
-            return new FileStatus[] {fileStatus(location, inputFile.length(), inputFile.lastModified())};
+        Optional<FileStatus> file = existingFileStatus(location);
+        if (file.isPresent()) {
+            return new FileStatus[] {file.get()};
         }
         if (isDirectory(location)) {
             return new FileStatus[0];
@@ -199,14 +216,28 @@ public class NativeHadoopFileSystem
             throws IOException
     {
         Location location = location(path);
-        if (isFile(location)) {
-            TrinoInputFile inputFile = fileSystem.newInputFile(location);
-            return fileStatus(location, inputFile.length(), inputFile.lastModified());
+        Optional<FileStatus> file = existingFileStatus(location);
+        if (file.isPresent()) {
+            return file.get();
         }
         if (isDirectory(location)) {
             return directoryStatus(location);
         }
         throw new FileNotFoundException("File does not exist: " + path);
+    }
+
+    private Optional<FileStatus> existingFileStatus(Location location)
+            throws IOException
+    {
+        if (location.path().isEmpty()) {
+            return Optional.empty();
+        }
+        // A single input file, so that object stores serve the existence check, length and modification time with one request
+        TrinoInputFile inputFile = fileSystem.newInputFile(location);
+        if (!inputFile.exists()) {
+            return Optional.empty();
+        }
+        return Optional.of(fileStatus(location, inputFile.length(), inputFile.lastModified()));
     }
 
     private boolean isFile(Location location)

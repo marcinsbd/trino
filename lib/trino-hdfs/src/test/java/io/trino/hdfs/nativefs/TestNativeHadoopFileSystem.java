@@ -20,6 +20,7 @@ import io.trino.spi.security.ConnectorIdentity;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FSDataOutputStream;
+import org.apache.hadoop.fs.FileAlreadyExistsException;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.LocatedFileStatus;
@@ -80,6 +81,21 @@ final class TestNativeHadoopFileSystem
         assertThat(configuration.get(NativeHadoopFileSystem.REGISTRY_ID_KEY)).isEqualTo(registryId);
         // Only schemes with a registered native file system are overridden
         assertThat(configuration.get("fs.s3a.impl")).isNull();
+    }
+
+    @Test
+    void testConfigurationInitializerKeepsConfiguredFileSystem()
+    {
+        Configuration config = new Configuration(false);
+        // A Hadoop file system the user provided is kept
+        config.set("fs.memory.impl", "org.apache.hadoop.fs.RawLocalFileSystem");
+        new NativeFileSystemConfigurationInitializer(registryId).initializeConfiguration(config);
+        assertThat(config.get("fs.memory.impl")).isEqualTo("org.apache.hadoop.fs.RawLocalFileSystem");
+
+        // A Hadoop file system that is not available, such as the S3A default, is replaced
+        config.set("fs.memory.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem");
+        new NativeFileSystemConfigurationInitializer(registryId).initializeConfiguration(config);
+        assertThat(config.get("fs.memory.impl")).isEqualTo(NativeHadoopFileSystem.class.getName());
     }
 
     @Test
@@ -194,7 +210,7 @@ final class TestNativeHadoopFileSystem
         assertThat(readNative("memory:///data/created.txt")).isEqualTo("first");
 
         assertThatThrownBy(() -> fileSystem.create(path, false))
-                .isInstanceOf(IOException.class)
+                .isInstanceOf(FileAlreadyExistsException.class)
                 .hasMessageContaining("File already exists");
 
         try (FSDataOutputStream output = fileSystem.create(path, true)) {
@@ -239,6 +255,14 @@ final class TestNativeHadoopFileSystem
 
         assertThat(fileSystem.delete(new Path("memory:///data"), true)).isTrue();
         assertThat(nativeFileSystem.newInputFile(Location.of("memory:///data/sub/b.txt")).exists()).isFalse();
+
+        // Hadoop contract: deleting a missing path returns false
+        assertThat(fileSystem.delete(new Path("memory:///data"), true)).isFalse();
+        assertThat(fileSystem.delete(new Path("memory:///missing.txt"), false)).isFalse();
+
+        assertThatThrownBy(() -> fileSystem.delete(new Path("memory:///"), true))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("Cannot delete the root of the file system");
     }
 
     @Test

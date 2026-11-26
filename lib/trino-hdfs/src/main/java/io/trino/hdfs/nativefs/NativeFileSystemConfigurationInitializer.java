@@ -21,7 +21,8 @@ import static java.util.Objects.requireNonNull;
 /**
  * Registers {@link NativeHadoopFileSystem} as the Hadoop file system for every scheme with a
  * native Trino file system, so that Hadoop file systems resolving child file systems by scheme,
- * such as ViewFS mount links, use the native file system.
+ * such as ViewFS mount links, use the native file system. A Hadoop file system configured for
+ * the scheme is kept if its class can be loaded.
  */
 public final class NativeFileSystemConfigurationInitializer
         implements ConfigurationInitializer
@@ -37,7 +38,13 @@ public final class NativeFileSystemConfigurationInitializer
     public void initializeConfiguration(Configuration config)
     {
         for (String scheme : NativeFileSystemRegistry.schemes(registryId)) {
-            config.set("fs.%s.impl".formatted(scheme), NativeHadoopFileSystem.class.getName());
+            String key = "fs.%s.impl".formatted(scheme);
+            // Keep a Hadoop file system the user configured and provided, such as EMRFS. Defaults like
+            // org.apache.hadoop.fs.s3a.S3AFileSystem are not shipped with Trino, so they cannot be loaded.
+            String configured = config.get(key);
+            if (configured == null || config.getClassByNameOrNull(configured) == null) {
+                config.set(key, NativeHadoopFileSystem.class.getName());
+            }
         }
         config.set(NativeHadoopFileSystem.REGISTRY_ID_KEY, registryId);
     }
