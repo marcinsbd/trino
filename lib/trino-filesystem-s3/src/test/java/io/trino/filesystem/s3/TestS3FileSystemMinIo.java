@@ -158,6 +158,15 @@ public class TestS3FileSystemMinIo
     }
 
     @Test
+    @Override
+    public void testListDirectory()
+            throws IOException
+    {
+        // MinIO is not hierarchical but has hierarchical naming constraints, see testListDirectories
+        testListDirectory(true);
+    }
+
+    @Test
     void testDeleteManyFiles()
             throws IOException
     {

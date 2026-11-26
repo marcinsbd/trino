@@ -14,6 +14,7 @@
 package io.trino.filesystem.tracking;
 
 import io.airlift.units.Duration;
+import io.trino.filesystem.DirectoryListing;
 import io.trino.filesystem.FileIterator;
 import io.trino.filesystem.Location;
 import io.trino.filesystem.TrinoFileSystem;
@@ -129,6 +130,13 @@ public class TrackingFileSystem
             throws IOException
     {
         return delegate.listDirectories(location);
+    }
+
+    @Override
+    public DirectoryListing listDirectory(Location location)
+            throws IOException
+    {
+        return delegate.listDirectory(location);
     }
 
     @Override

@@ -13,8 +13,8 @@
  */
 package io.trino.hdfs.nativefs;
 
+import io.trino.filesystem.DirectoryListing;
 import io.trino.filesystem.FileEntry;
-import io.trino.filesystem.FileIterator;
 import io.trino.filesystem.Location;
 import io.trino.filesystem.TrinoFileSystem;
 import io.trino.filesystem.TrinoFileSystemFactory;
@@ -149,28 +149,29 @@ public class NativeHadoopFileSystem
             throws IOException
     {
         Location location = location(path);
+
+        // A single listing of the direct children, which object stores serve with one delimited request per page
+        DirectoryListing listing = fileSystem.listDirectory(location);
+        if (!listing.isEmpty()) {
+            List<FileStatus> statuses = new ArrayList<>(listing.files().size() + listing.directories().size());
+            for (Location directory : listing.directories()) {
+                statuses.add(directoryStatus(directory));
+            }
+            for (FileEntry file : listing.files()) {
+                statuses.add(fileStatus(file.location(), file.length(), file.lastModified()));
+            }
+            return statuses.toArray(FileStatus[]::new);
+        }
+
+        // Nothing below the location: it is a file, an empty directory, or missing
         if (isFile(location)) {
             TrinoInputFile inputFile = fileSystem.newInputFile(location);
             return new FileStatus[] {fileStatus(location, inputFile.length(), inputFile.lastModified())};
         }
-
-        List<FileStatus> statuses = new ArrayList<>();
-        for (Location directory : fileSystem.listDirectories(location)) {
-            statuses.add(directoryStatus(directory));
+        if (isDirectory(location)) {
+            return new FileStatus[0];
         }
-        // Compare paths, as the native file system may format the same location differently than Hadoop
-        String parent = withoutTrailingSlash(location.path());
-        FileIterator files = fileSystem.listFiles(location);
-        while (files.hasNext()) {
-            FileEntry file = files.next();
-            if (withoutTrailingSlash(file.location().parentDirectory().path()).equals(parent)) {
-                statuses.add(fileStatus(file.location(), file.length(), file.lastModified()));
-            }
-        }
-        if (statuses.isEmpty() && !isDirectory(location)) {
-            throw new FileNotFoundException("File does not exist: " + path);
-        }
-        return statuses.toArray(FileStatus[]::new);
+        throw new FileNotFoundException("File does not exist: " + path);
     }
 
     @Override
@@ -229,11 +230,6 @@ public class NativeHadoopFileSystem
     private static Path toPath(Location location)
     {
         return new Path(location.toString());
-    }
-
-    private static String withoutTrailingSlash(String path)
-    {
-        return path.endsWith("/") ? path.substring(0, path.length() - 1) : path;
     }
 
     private static FileStatus fileStatus(Location location, long length, Instant lastModified)

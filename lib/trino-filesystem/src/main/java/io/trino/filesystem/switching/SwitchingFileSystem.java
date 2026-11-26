@@ -14,6 +14,7 @@
 package io.trino.filesystem.switching;
 
 import io.airlift.units.Duration;
+import io.trino.filesystem.DirectoryListing;
 import io.trino.filesystem.FileIterator;
 import io.trino.filesystem.Location;
 import io.trino.filesystem.TrinoFileSystem;
@@ -150,6 +151,13 @@ final class SwitchingFileSystem
             throws IOException
     {
         return fileSystem(location).listDirectories(location);
+    }
+
+    @Override
+    public DirectoryListing listDirectory(Location location)
+            throws IOException
+    {
+        return fileSystem(location).listDirectory(location);
     }
 
     @Override

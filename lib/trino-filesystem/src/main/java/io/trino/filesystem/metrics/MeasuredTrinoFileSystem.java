@@ -14,6 +14,7 @@
 package io.trino.filesystem.metrics;
 
 import io.airlift.units.Duration;
+import io.trino.filesystem.DirectoryListing;
 import io.trino.filesystem.FileIterator;
 import io.trino.filesystem.Location;
 import io.trino.filesystem.TrinoFileSystem;
@@ -179,6 +180,13 @@ public class MeasuredTrinoFileSystem
             throws IOException
     {
         return measure("listDirectories", () -> delegate.listDirectories(location));
+    }
+
+    @Override
+    public DirectoryListing listDirectory(Location location)
+            throws IOException
+    {
+        return measure("listDirectory", () -> delegate.listDirectory(location));
     }
 
     @Override

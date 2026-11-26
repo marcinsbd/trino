@@ -1542,6 +1542,57 @@ public abstract class AbstractTestTrinoFileSystem
     }
 
     @Test
+    public void testListDirectory()
+            throws IOException
+    {
+        testListDirectory(isHierarchical());
+    }
+
+    protected void testListDirectory(boolean hierarchicalNamingConstraints)
+            throws IOException
+    {
+        try (Closer closer = Closer.create()) {
+            createTestDirectoryStructure(closer, hierarchicalNamingConstraints);
+            createBlob(closer, "other/file");
+
+            // direct files only, and direct subdirectories as returned by listDirectories
+            assertThat(listDirectoryFiles("")).containsExactlyInAnyOrderElementsOf(locations(hierarchicalNamingConstraints, "level0-file0", "level0-file1", "level0-file2", "level0"));
+            assertThat(getFileSystem().listDirectory(createListingLocation("")).directories()).containsOnly(
+                    createLocation("level0/"),
+                    createLocation("other/"));
+
+            for (String path : List.of("level0", "level0/")) {
+                assertThat(listDirectoryFiles(path)).containsExactlyInAnyOrderElementsOf(locations(hierarchicalNamingConstraints, "level0/level1-file0", "level0/level1-file1", "level0/level1-file2", "level0/level1"));
+                assertThat(getFileSystem().listDirectory(createListingLocation(path)).directories()).containsOnly(
+                        createLocation("level0/level1/"));
+            }
+
+            assertThat(listDirectoryFiles("level0/level1")).containsExactlyInAnyOrderElementsOf(locations(hierarchicalNamingConstraints, "level0/level1/level2-file0", "level0/level1/level2-file1", "level0/level1/level2-file2", "level0/level1/level2"));
+            assertThat(getFileSystem().listDirectory(createListingLocation("level0/level1")).directories()).isEmpty();
+
+            assertThat(getFileSystem().listDirectory(createListingLocation("unknown")).isEmpty()).isTrue();
+            assertThat(getFileSystem().listDirectory(createListingLocation("unknown/")).isEmpty()).isTrue();
+        }
+    }
+
+    private List<Location> listDirectoryFiles(String path)
+            throws IOException
+    {
+        return getFileSystem().listDirectory(createListingLocation(path)).files().stream()
+                .map(FileEntry::location)
+                .toList();
+    }
+
+    // The last path is a blob with the same name as a directory, which only exists without hierarchical naming constraints
+    private List<Location> locations(boolean hierarchicalNamingConstraints, String... paths)
+    {
+        List<String> selected = hierarchicalNamingConstraints ? List.of(paths).subList(0, paths.length - 1) : List.of(paths);
+        return selected.stream()
+                .map(this::createLocation)
+                .toList();
+    }
+
+    @Test
     public void testListDirectories()
             throws IOException
     {

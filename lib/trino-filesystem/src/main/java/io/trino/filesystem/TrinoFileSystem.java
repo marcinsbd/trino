@@ -13,6 +13,7 @@
  */
 package io.trino.filesystem;
 
+import com.google.common.collect.ImmutableList;
 import io.airlift.units.Duration;
 import io.trino.filesystem.encryption.EncryptionKey;
 import io.trino.spi.metrics.Metrics;
@@ -337,6 +338,34 @@ public interface TrinoFileSystem
             throws IOException;
 
     /**
+     * Lists the direct children of the specified directory: the files directly within it,
+     * and the directories that are direct descendants of it, as returned by
+     * {@link #listDirectories(Location)}. The location is always interpreted as a directory,
+     * whether or not it ends with a slash. If the location does not exist, an empty listing
+     * is returned.
+     * <p>
+     * The default implementation lists all files recursively and keeps the direct children.
+     * File systems that can list a single level natively should override this method.
+     *
+     * @throws IllegalArgumentException if location is not valid for this file system
+     */
+    default DirectoryListing listDirectory(Location location)
+            throws IOException
+    {
+        Set<Location> directories = listDirectories(location);
+        String directoryPath = withoutTrailingSlash(location.path());
+        ImmutableList.Builder<FileEntry> files = ImmutableList.builder();
+        FileIterator iterator = listFiles(location);
+        while (iterator.hasNext()) {
+            FileEntry file = iterator.next();
+            if (withoutTrailingSlash(file.location().parentDirectory().path()).equals(directoryPath)) {
+                files.add(file);
+            }
+        }
+        return new DirectoryListing(files.build(), directories);
+    }
+
+    /**
      * Creates a temporary directory for the target path. The directory will be created
      * using the (possibly absolute) prefix such that the directory can be renamed to
      * the target path. The relative prefix will be used if the target path does not
@@ -412,5 +441,10 @@ public interface TrinoFileSystem
     default Metrics getMetrics()
     {
         return Metrics.EMPTY;
+    }
+
+    private static String withoutTrailingSlash(String path)
+    {
+        return path.endsWith("/") ? path.substring(0, path.length() - 1) : path;
     }
 }

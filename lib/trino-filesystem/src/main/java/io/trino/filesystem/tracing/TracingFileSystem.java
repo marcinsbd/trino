@@ -16,6 +16,7 @@ package io.trino.filesystem.tracing;
 import io.airlift.units.Duration;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.Tracer;
+import io.trino.filesystem.DirectoryListing;
 import io.trino.filesystem.FileIterator;
 import io.trino.filesystem.Location;
 import io.trino.filesystem.TrinoFileSystem;
@@ -169,6 +170,16 @@ final class TracingFileSystem
                 .setAttribute(FileSystemAttributes.FILE_LOCATION, location.toString())
                 .startSpan();
         return withTracing(span, () -> delegate.listDirectories(location));
+    }
+
+    @Override
+    public DirectoryListing listDirectory(Location location)
+            throws IOException
+    {
+        Span span = tracer.spanBuilder("FileSystem.listDirectory")
+                .setAttribute(FileSystemAttributes.FILE_LOCATION, location.toString())
+                .startSpan();
+        return withTracing(span, () -> delegate.listDirectory(location));
     }
 
     @Override

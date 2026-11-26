@@ -14,9 +14,13 @@
 package io.trino.filesystem.s3;
 
 import com.google.common.collect.HashMultimap;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.SetMultimap;
 import io.airlift.units.Duration;
+import io.trino.filesystem.DirectoryListing;
 import io.trino.filesystem.EmulatedListFilesStartingFromIterator;
+import io.trino.filesystem.FileEntry;
 import io.trino.filesystem.FileIterator;
 import io.trino.filesystem.Location;
 import io.trino.filesystem.TrinoFileSystem;
@@ -33,6 +37,7 @@ import software.amazon.awssdk.services.s3.model.DeleteObjectsRequest;
 import software.amazon.awssdk.services.s3.model.DeleteObjectsResponse;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
 import software.amazon.awssdk.services.s3.model.ObjectIdentifier;
 import software.amazon.awssdk.services.s3.model.OptionalObjectAttributes;
 import software.amazon.awssdk.services.s3.model.RequestPayer;
@@ -294,6 +299,42 @@ final class S3FileSystem
                     .map(CommonPrefix::prefix)
                     .map(prefix -> s3Location.objectLocation(prefix))
                     .collect(toImmutableSet());
+        }
+        catch (SdkException e) {
+            throw handleS3Exception(e, "Failed to list location: " + location);
+        }
+    }
+
+    @Override
+    public DirectoryListing listDirectory(Location location)
+            throws IOException
+    {
+        S3Location s3Location = new S3Location(location);
+
+        // A single delimited listing returns both the direct files and the direct subdirectories
+        ListObjectsV2Request request = listObjectsRequest(s3Location, directoryKey(s3Location.key()))
+                .delimiter("/")
+                .build();
+
+        try {
+            ImmutableList.Builder<S3Object> objects = ImmutableList.builder();
+            ImmutableSet.Builder<Location> directories = ImmutableSet.builder();
+            for (ListObjectsV2Response response : client.listObjectsV2Paginator(request)) {
+                response.contents().stream()
+                        .filter(object -> !object.key().endsWith("/"))
+                        .forEach(objects::add);
+                response.commonPrefixes().stream()
+                        .map(CommonPrefix::prefix)
+                        .map(s3Location::objectLocation)
+                        .forEach(directories::add);
+            }
+
+            ImmutableList.Builder<FileEntry> files = ImmutableList.builder();
+            FileIterator iterator = new S3FileIterator(s3Location, objects.build().iterator());
+            while (iterator.hasNext()) {
+                files.add(iterator.next());
+            }
+            return new DirectoryListing(files.build(), directories.build());
         }
         catch (SdkException e) {
             throw handleS3Exception(e, "Failed to list location: " + location);
