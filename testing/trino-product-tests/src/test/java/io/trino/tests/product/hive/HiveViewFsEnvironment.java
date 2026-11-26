@@ -37,14 +37,17 @@ import static java.nio.charset.StandardCharsets.UTF_8;
  * <ul>
  *   <li>Hadoop container with HDFS, Hive Metastore, and HiveServer2</li>
  *   <li>Floci container providing S3-compatible object storage</li>
- *   <li>Trino container with the "hive" catalog using the legacy Hadoop file system and a
- *       {@code core-site.xml} that enables the ViewFS overload scheme for {@code hdfs://}</li>
+ *   <li>Trino container with a {@code core-site.xml} that enables the ViewFS overload scheme for
+ *       {@code hdfs://}, and defines a {@code viewfs://cluster} mount table</li>
+ *   <li>The "hive" catalog with the Hadoop file system and native S3, and the
+ *       "hive_without_native_s3" catalog with the Hadoop file system only</li>
  * </ul>
  * <p>
- * The ViewFS mount table maps {@link #S3_MOUNT_PATH} to {@code s3a://<bucket>/<prefix>}; all other
- * paths fall back to the real HDFS NameNode. The Hive Metastore and HiveServer2 are not
- * ViewFS-aware, so tables created through Hive get a plain HDFS directory, while Trino resolves
- * the same {@code hdfs://} location through the mount table.
+ * The overload scheme mount table maps {@link #S3_MOUNT_PATH} to {@code s3a://<bucket>/<prefix>}, and
+ * all other paths fall back to the real HDFS NameNode. The {@code viewfs://cluster} mount table maps
+ * {@link #VIEWFS_S3_MOUNT_PATH} to the same {@code s3a://} prefix. The Hive Metastore and HiveServer2
+ * only create table directories: they see {@code hdfs://} locations as plain HDFS, and resolve
+ * {@code viewfs://cluster} to a plain HDFS directory. Trino resolves both through the mount tables.
  */
 public class HiveViewFsEnvironment
         extends ProductTestEnvironment
@@ -52,6 +55,9 @@ public class HiveViewFsEnvironment
     public static final String S3_MOUNT_PATH = "/tmp/viewfs/s3_data";
     public static final String BUCKET_NAME = "viewfs-bucket";
     public static final String BUCKET_PREFIX = "s3_data";
+    public static final String VIEWFS_MOUNT_TABLE = "cluster";
+    public static final String VIEWFS_S3_MOUNT_PATH = "/s3_data";
+    public static final String CATALOG_WITHOUT_NATIVE_S3 = "hive_without_native_s3";
 
     private static final String VIEWFS_CORE_SITE = "/etc/trino/viewfs-core-site.xml";
 
@@ -77,7 +83,8 @@ public class HiveViewFsEnvironment
 
         hadoop = new HadoopContainer()
                 .withNetwork(network)
-                .withNetworkAliases(HadoopContainer.HOST_NAME);
+                .withNetworkAliases(HadoopContainer.HOST_NAME)
+                .withCopyToContainer(Transferable.of(metastoreViewFsInitScript(), 0755), "/etc/hadoop-init.d/10-viewfs-mount-table.sh");
         hadoop.start();
 
         trino = TrinoProductTestContainer.builder()
@@ -91,10 +98,31 @@ public class HiveViewFsEnvironment
                         // Native S3 serves the s3a:// mount link through the Hadoop file system bridge
                         .withFlociS3()
                         .build())
+                .withCatalog(CATALOG_WITHOUT_NATIVE_S3, hiveCatalog(HiveCatalogPropertiesBuilder.hadoopMetastoreUri())
+                        .withCommonProperties()
+                        .put("fs.hadoop.enabled", "true")
+                        .put("hive.config.resources", "/etc/trino/hdfs-site.xml," + VIEWFS_CORE_SITE)
+                        .build())
                 .withCatalog("tpch", Map.of("connector.name", "tpch"))
                 .build();
         trino.withCopyToContainer(Transferable.of(viewFsCoreSiteXml()), VIEWFS_CORE_SITE);
         TrinoProductTestContainer.startAndWait(trino);
+    }
+
+    // The metastore and HiveServer2 only create table directories, so map viewfs://cluster to plain HDFS for them
+    private static String metastoreViewFsInitScript()
+    {
+        String property = "<property><name>fs.viewfs.mounttable.%s.linkFallback</name><value>hdfs://%s:%d/tmp/viewfs/metastore</value></property>"
+                .formatted(VIEWFS_MOUNT_TABLE, HadoopContainer.HOST_NAME, HadoopContainer.HDFS_NAMENODE_PORT);
+        return """
+               #!/bin/bash
+               set -euo pipefail
+               for file in /opt/hadoop/etc/hadoop/core-site.xml /etc/hadoop/conf/core-site.xml; do
+                   if [ -f "$file" ]; then
+                       sed -i 's|</configuration>|%s</configuration>|' "$file"
+                   fi
+               done
+               """.formatted(property);
     }
 
     private static String viewFsCoreSiteXml()
@@ -120,6 +148,16 @@ public class HiveViewFsEnvironment
                    <property>
                        <name>fs.viewfs.mounttable.%1$s.linkFallback</name>
                        <value>hdfs://%1$s:%5$d/</value>
+                   </property>
+
+                   <!-- viewfs://%10$s mount table, resolved by ViewFileSystem -->
+                   <property>
+                       <name>fs.viewfs.impl</name>
+                       <value>org.apache.hadoop.fs.viewfs.ViewFileSystem</value>
+                   </property>
+                   <property>
+                       <name>fs.viewfs.mounttable.%10$s.link.%11$s</name>
+                       <value>s3a://%3$s/%4$s</value>
                    </property>
 
                    <!-- s3a client settings; fs.viewfs.overload.scheme.target.s3a.impl is deliberately unset -->
@@ -157,7 +195,9 @@ public class HiveViewFsEnvironment
                 Floci.FLOCI_PORT,
                 Floci.FLOCI_ACCESS_KEY,
                 Floci.FLOCI_SECRET_KEY,
-                Floci.FLOCI_REGION);
+                Floci.FLOCI_REGION,
+                VIEWFS_MOUNT_TABLE,
+                VIEWFS_S3_MOUNT_PATH);
     }
 
     /**
@@ -166,6 +206,14 @@ public class HiveViewFsEnvironment
     public String hdfsLocation(String path)
     {
         return "hdfs://%s:%d%s".formatted(HadoopContainer.HOST_NAME, HadoopContainer.HDFS_NAMENODE_PORT, path);
+    }
+
+    /**
+     * Returns the {@code viewfs://} URI that Trino resolves through the {@code viewfs://cluster} mount table.
+     */
+    public String viewFsLocation(String path)
+    {
+        return "viewfs://%s%s".formatted(VIEWFS_MOUNT_TABLE, path);
     }
 
     /**
