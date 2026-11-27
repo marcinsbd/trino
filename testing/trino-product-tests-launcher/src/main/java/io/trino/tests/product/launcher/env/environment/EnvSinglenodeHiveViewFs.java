@@ -72,5 +72,6 @@ public final class EnvSinglenodeHiveViewFs
 
         builder.addConnector("hive", forHostPath(configDir.getPath("hive.properties")));
         builder.addConnector("hive_without_staging", forHostPath(configDir.getPath("hive_without_staging.properties")));
+        builder.addConnector("hive_recursive_directories", forHostPath(configDir.getPath("hive_recursive_directories.properties")));
     }
 }

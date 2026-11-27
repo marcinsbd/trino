@@ -126,6 +126,45 @@ public class TestHiveViewFsMountLinks
     }
 
     @Test(groups = {HIVE_VIEWFS, PROFILE_SPECIFIC_TESTS})
+    public void testReadTableWithRecursiveDirectoriesOnViewFsMountLinkToS3()
+            throws Exception
+    {
+        String tableName = "test_viewfs_s3_mount_link_recursive_directories";
+        String objectPrefix = BUCKET_PREFIX + "/" + tableName + "/";
+        try (MinioClient minio = new MinioClient()) {
+            onHive().executeQuery("DROP TABLE IF EXISTS default." + tableName);
+            deleteObjects(minio, objectPrefix);
+            try {
+                onHive().executeQuery(
+                        """
+                        CREATE EXTERNAL TABLE default.%s (id INT, name STRING)
+                        ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+                        STORED AS TEXTFILE
+                        LOCATION '%s/%s'
+                        """.formatted(tableName, S3_MOUNT_LOCATION, tableName));
+                minio.putObject(BUCKET_NAME, "1,top\n".getBytes(UTF_8), objectPrefix + "data.csv");
+                minio.putObject(BUCKET_NAME, "2,nested\n".getBytes(UTF_8), objectPrefix + "subdirectory/nested.csv");
+                minio.putObject(BUCKET_NAME, "3,deep\n".getBytes(UTF_8), objectPrefix + "subdirectory/deeper/deep.csv");
+                // An empty directory, represented only by a directory marker object, and files that are not data
+                minio.putObject(BUCKET_NAME, new byte[0], objectPrefix + "empty_subdirectory/");
+                minio.putObject(BUCKET_NAME, new byte[0], objectPrefix + "_SUCCESS");
+                minio.putObject(BUCKET_NAME, "9,hidden\n".getBytes(UTF_8), objectPrefix + ".hidden");
+
+                // With recursive directories, files in all subdirectories are read through ViewFS
+                assertThat(onTrino().executeQuery("SELECT id, name FROM hive_recursive_directories.default." + tableName))
+                        .containsOnly(row(1, "top"), row(2, "nested"), row(3, "deep"));
+                // Without, only the files directly in the table directory are read
+                assertThat(onTrino().executeQuery("SELECT id, name FROM hive.default." + tableName))
+                        .containsOnly(row(1, "top"));
+            }
+            finally {
+                onHive().executeQuery("DROP TABLE IF EXISTS default." + tableName);
+                deleteObjects(minio, objectPrefix);
+            }
+        }
+    }
+
+    @Test(groups = {HIVE_VIEWFS, PROFILE_SPECIFIC_TESTS})
     public void testInsertIntoTableOnViewFsMountLinkToS3()
             throws Exception
     {
