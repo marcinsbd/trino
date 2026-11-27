@@ -15,7 +15,9 @@ package io.trino.hdfs.nativefs;
 
 import io.trino.filesystem.Location;
 import io.trino.filesystem.TrinoFileSystem;
+import io.trino.filesystem.TrinoFileSystemFactory;
 import io.trino.filesystem.memory.MemoryFileSystemFactory;
+import io.trino.spi.classloader.ThreadContextClassLoader;
 import io.trino.spi.security.ConnectorIdentity;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
@@ -32,12 +34,17 @@ import org.junit.jupiter.api.Test;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
 import java.net.URI;
+import java.net.URL;
+import java.net.URLClassLoader;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -184,8 +191,8 @@ final class TestNativeHadoopFileSystem
                 .singleElement()
                 .satisfies(status -> assertThat(status.getLen()).isEqualTo(2));
 
-        assertThatThrownBy(() -> fileSystem.listStatus(new Path("memory:///missing")))
-                .isInstanceOf(FileNotFoundException.class);
+        // Object stores cannot distinguish a missing directory from an empty one, such as a "dir/" marker
+        assertThat(fileSystem.listStatus(new Path("memory:///missing"))).isEmpty();
     }
 
     @Test
@@ -237,6 +244,9 @@ final class TestNativeHadoopFileSystem
 
         assertThat(nativeFileSystem.newInputFile(Location.of("memory:///data/source.txt")).exists()).isFalse();
         assertThat(readNative("memory:///data/target.txt")).isEqualTo("content");
+
+        // Hadoop contract: renaming a missing path returns false
+        assertThat(fileSystem.rename(new Path("memory:///data/missing.txt"), new Path("memory:///data/other.txt"))).isFalse();
     }
 
     @Test
@@ -288,6 +298,58 @@ final class TestNativeHadoopFileSystem
                 assertThat(new String(input.readAllBytes(), UTF_8)).isEqualTo("bb");
             }
         }
+    }
+
+    @Test
+    void testNativeCallsUseNativeContextClassLoader()
+            throws Exception
+    {
+        // Record the context class loader of every call into the native file system
+        MemoryFileSystemFactory memory = new MemoryFileSystemFactory();
+        List<ClassLoader> contextClassLoaders = new CopyOnWriteArrayList<>();
+        TrinoFileSystemFactory recordingFactory = identity -> {
+            contextClassLoaders.add(Thread.currentThread().getContextClassLoader());
+            TrinoFileSystem delegate = memory.create(identity);
+            return (TrinoFileSystem) Proxy.newProxyInstance(
+                    TrinoFileSystem.class.getClassLoader(),
+                    new Class<?>[] {TrinoFileSystem.class},
+                    (_, method, arguments) -> {
+                        contextClassLoaders.add(Thread.currentThread().getContextClassLoader());
+                        try {
+                            return method.invoke(delegate, arguments);
+                        }
+                        catch (InvocationTargetException e) {
+                            throw e.getCause();
+                        }
+                    });
+        };
+        String recordingRegistryId = "test-" + UUID.randomUUID();
+        NativeFileSystemRegistry.register(recordingRegistryId, Map.of("memory", recordingFactory));
+        Configuration recordingConfiguration = new Configuration(false);
+        new NativeFileSystemConfigurationInitializer(recordingRegistryId).initializeConfiguration(recordingConfiguration);
+
+        // Hadoop calls the file system with an unrelated context class loader, such as the HDFS class loader
+        try (URLClassLoader unrelatedClassLoader = new URLClassLoader(new URL[0], null);
+                ThreadContextClassLoader _ = new ThreadContextClassLoader(unrelatedClassLoader);
+                FileSystem recordingFileSystem = new NativeHadoopFileSystem()) {
+            recordingFileSystem.initialize(URI.create("memory:///"), recordingConfiguration);
+            try (FSDataOutputStream output = recordingFileSystem.create(new Path("memory:///data/file.txt"), true)) {
+                output.write("content".getBytes(UTF_8));
+            }
+            assertThat(recordingFileSystem.listStatus(new Path("memory:///data"))).hasSize(1);
+            assertThat(recordingFileSystem.getFileStatus(new Path("memory:///data/file.txt")).getLen()).isEqualTo(7);
+            try (FSDataInputStream input = recordingFileSystem.open(new Path("memory:///data/file.txt"))) {
+                assertThat(new String(input.readAllBytes(), UTF_8)).isEqualTo("content");
+            }
+            assertThat(recordingFileSystem.delete(new Path("memory:///data"), true)).isTrue();
+        }
+        finally {
+            NativeFileSystemRegistry.unregister(recordingRegistryId);
+        }
+
+        assertThat(contextClassLoaders)
+                .isNotEmpty()
+                .allMatch(classLoader -> classLoader == recordingFactory.getClass().getClassLoader());
     }
 
     private static List<String> listFiles(FileSystem fileSystem, Path path)

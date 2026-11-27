@@ -140,6 +140,8 @@ class TestHiveViewFsMountLinks
             env.putS3Object(objectPrefix + "region=eu/category=a/event_date=2026-11-02/data.csv", "2,b\n");
             env.putS3Object(objectPrefix + "region=eu/category=b/event_date=2026-11-01/data.csv", "3,c\n");
             env.putS3Object(objectPrefix + "region=us/category=a/event_date=2026-11-01/data.csv", "4,d\n5,e\n");
+            // An empty partition directory, represented only by a directory marker object
+            env.putS3Object(objectPrefix + "region=eu/category=empty/", "");
 
             // Discovering partitions lists every directory level through ViewFS
             env.executeTrinoUpdate("CALL hive.system.sync_partition_metadata('default', '" + tableName + "', 'FULL')");
@@ -215,6 +217,8 @@ class TestHiveViewFsMountLinks
             env.putS3Object(objectPrefix + "subdirectory_$folder$", "");
             env.putS3Object(objectPrefix + "subdirectory/", "");
             env.putS3Object(objectPrefix + "subdirectory/nested.csv", "8,nested\n");
+            // An empty directory, represented only by a directory marker object
+            env.putS3Object(objectPrefix + "empty_subdirectory/", "");
 
             assertThat(env.executeTrino("SELECT id, name FROM hive.default." + tableName))
                     .containsOnly(row(1, "a"), row(2, "b"));

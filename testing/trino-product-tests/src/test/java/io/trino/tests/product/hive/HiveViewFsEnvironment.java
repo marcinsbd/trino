@@ -230,7 +230,8 @@ public class HiveViewFsEnvironment
     }
 
     /**
-     * Executes a statement on HiveServer2. Hive is not ViewFS-aware, so it only touches real HDFS.
+     * Executes a statement on HiveServer2. Hive sees {@code hdfs://} locations as plain HDFS and maps
+     * {@code viewfs://cluster} to plain HDFS, so it only touches real HDFS.
      */
     public void executeHiveUpdate(@Language("SQL") String sql)
     {

@@ -20,6 +20,7 @@ import io.trino.filesystem.TrinoFileSystem;
 import io.trino.filesystem.TrinoFileSystemFactory;
 import io.trino.filesystem.TrinoInputFile;
 import io.trino.filesystem.TrinoOutputFile;
+import io.trino.spi.classloader.ThreadContextClassLoader;
 import io.trino.spi.security.ConnectorIdentity;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
@@ -59,6 +60,7 @@ public class NativeHadoopFileSystem
 
     private URI uri;
     private Path workingDirectory;
+    private ClassLoader nativeClassLoader;
     private TrinoFileSystem fileSystem;
 
     @Override
@@ -77,7 +79,13 @@ public class NativeHadoopFileSystem
         }
         TrinoFileSystemFactory factory = NativeFileSystemRegistry.get(registryId, name.getScheme())
                 .orElseThrow(() -> new IOException("No native file system registered for scheme: " + name.getScheme()));
-        fileSystem = factory.create(ConnectorIdentity.ofUser(UserGroupInformation.getCurrentUser().getShortUserName()));
+        // Hadoop calls run with the HDFS class loader as context class loader, which cannot see the classes of
+        // the native file system, such as the AWS SDK. Native calls switch to the class loader of the factory.
+        nativeClassLoader = factory.getClass().getClassLoader();
+        String user = UserGroupInformation.getCurrentUser().getShortUserName();
+        try (ThreadContextClassLoader _ = new ThreadContextClassLoader(nativeClassLoader)) {
+            fileSystem = factory.create(ConnectorIdentity.ofUser(user));
+        }
     }
 
     @Override
@@ -96,29 +104,33 @@ public class NativeHadoopFileSystem
     public FSDataInputStream open(Path path, int bufferSize)
             throws IOException
     {
-        TrinoInputFile inputFile = fileSystem.newInputFile(location(path));
-        return new FSDataInputStream(new NativeHadoopInputStream(inputFile.newStream()));
+        try (ThreadContextClassLoader _ = new ThreadContextClassLoader(nativeClassLoader)) {
+            TrinoInputFile inputFile = fileSystem.newInputFile(location(path));
+            return new FSDataInputStream(new NativeHadoopInputStream(inputFile.newStream(), nativeClassLoader));
+        }
     }
 
     @Override
     public FSDataOutputStream create(Path path, FsPermission permission, boolean overwrite, int bufferSize, short replication, long blockSize, Progressable progress)
             throws IOException
     {
-        Location location = location(path);
-        if (!overwrite && isFile(location)) {
-            throw new FileAlreadyExistsException("File already exists: " + path);
-        }
-        TrinoOutputFile outputFile = fileSystem.newOutputFile(location);
-        try {
-            return new FSDataOutputStream(outputFile.create(), statistics);
-        }
-        catch (java.nio.file.FileAlreadyExistsException e) {
-            // File systems that do not overwrite on create, so overwrite is only paid for when the file exists
-            if (!overwrite) {
+        try (ThreadContextClassLoader _ = new ThreadContextClassLoader(nativeClassLoader)) {
+            Location location = location(path);
+            if (!overwrite && isFile(location)) {
                 throw new FileAlreadyExistsException("File already exists: " + path);
             }
-            fileSystem.deleteFile(location);
-            return new FSDataOutputStream(outputFile.create(), statistics);
+            TrinoOutputFile outputFile = fileSystem.newOutputFile(location);
+            try {
+                return new FSDataOutputStream(new NativeHadoopOutputStream(outputFile.create(), nativeClassLoader), statistics);
+            }
+            catch (java.nio.file.FileAlreadyExistsException e) {
+                // File systems that do not overwrite on create, so overwrite is only paid for when the file exists
+                if (!overwrite) {
+                    throw new FileAlreadyExistsException("File already exists: " + path);
+                }
+                fileSystem.deleteFile(location);
+                return new FSDataOutputStream(new NativeHadoopOutputStream(outputFile.create(), nativeClassLoader), statistics);
+            }
         }
     }
 
@@ -133,62 +145,77 @@ public class NativeHadoopFileSystem
     public boolean rename(Path source, Path target)
             throws IOException
     {
-        fileSystem.renameFile(location(source), location(target));
-        return true;
+        try (ThreadContextClassLoader _ = new ThreadContextClassLoader(nativeClassLoader)) {
+            Location sourceLocation = location(source);
+            Location targetLocation = location(target);
+            if (isFile(sourceLocation)) {
+                fileSystem.renameFile(sourceLocation, targetLocation);
+                return true;
+            }
+            if (isDirectory(sourceLocation)) {
+                fileSystem.renameDirectory(sourceLocation, targetLocation);
+                return true;
+            }
+            // Hadoop contract: renaming a missing path returns false
+            return false;
+        }
     }
 
     @Override
     public boolean delete(Path path, boolean recursive)
             throws IOException
     {
-        Location location = location(path);
-        if (location.path().isEmpty()) {
-            throw new IOException("Cannot delete the root of the file system: " + path);
-        }
-        if (isFile(location)) {
-            fileSystem.deleteFile(location);
+        try (ThreadContextClassLoader _ = new ThreadContextClassLoader(nativeClassLoader)) {
+            Location location = location(path);
+            if (location.path().isEmpty()) {
+                throw new IOException("Cannot delete the root of the file system: " + path);
+            }
+            if (isFile(location)) {
+                fileSystem.deleteFile(location);
+                return true;
+            }
+            DirectoryListing listing = fileSystem.listDirectory(location);
+            if (listing.isEmpty() && !isDirectory(location)) {
+                // Hadoop contract: deleting a missing path returns false
+                return false;
+            }
+            if (!recursive && !listing.isEmpty()) {
+                throw new IOException("Directory is not empty: " + path);
+            }
+            fileSystem.deleteDirectory(location);
             return true;
         }
-        DirectoryListing listing = fileSystem.listDirectory(location);
-        if (listing.isEmpty() && !isDirectory(location)) {
-            // Hadoop contract: deleting a missing path returns false
-            return false;
-        }
-        if (!recursive && !listing.isEmpty()) {
-            throw new IOException("Directory is not empty: " + path);
-        }
-        fileSystem.deleteDirectory(location);
-        return true;
     }
 
     @Override
     public FileStatus[] listStatus(Path path)
             throws IOException
     {
-        Location location = location(path);
+        try (ThreadContextClassLoader _ = new ThreadContextClassLoader(nativeClassLoader)) {
+            Location location = location(path);
 
-        // A single listing of the direct children, which object stores serve with one delimited request per page
-        DirectoryListing listing = fileSystem.listDirectory(location);
-        if (!listing.isEmpty()) {
-            List<FileStatus> statuses = new ArrayList<>(listing.files().size() + listing.directories().size());
-            for (Location directory : listing.directories()) {
-                statuses.add(directoryStatus(directory));
+            // A single listing of the direct children, which object stores serve with one delimited request per page
+            DirectoryListing listing = fileSystem.listDirectory(location);
+            if (!listing.isEmpty()) {
+                List<FileStatus> statuses = new ArrayList<>(listing.files().size() + listing.directories().size());
+                for (Location directory : listing.directories()) {
+                    statuses.add(directoryStatus(directory));
+                }
+                for (FileEntry file : listing.files()) {
+                    statuses.add(fileStatus(file.location(), file.length(), file.lastModified()));
+                }
+                return statuses.toArray(FileStatus[]::new);
             }
-            for (FileEntry file : listing.files()) {
-                statuses.add(fileStatus(file.location(), file.length(), file.lastModified()));
-            }
-            return statuses.toArray(FileStatus[]::new);
-        }
 
-        // Nothing below the location: it is a file, an empty directory, or missing
-        Optional<FileStatus> file = existingFileStatus(location);
-        if (file.isPresent()) {
-            return new FileStatus[] {file.get()};
-        }
-        if (isDirectory(location)) {
+            // Nothing below the location: it is a file, an empty directory, or missing
+            Optional<FileStatus> file = existingFileStatus(location);
+            if (file.isPresent()) {
+                return new FileStatus[] {file.get()};
+            }
+            // Object stores do not distinguish a missing directory from an empty one, for example a
+            // directory represented only by a "dir/" marker object, which the listing of its parent reports
             return new FileStatus[0];
         }
-        throw new FileNotFoundException("File does not exist: " + path);
     }
 
     @Override
@@ -207,23 +234,27 @@ public class NativeHadoopFileSystem
     public boolean mkdirs(Path path, FsPermission permission)
             throws IOException
     {
-        fileSystem.createDirectory(location(path));
-        return true;
+        try (ThreadContextClassLoader _ = new ThreadContextClassLoader(nativeClassLoader)) {
+            fileSystem.createDirectory(location(path));
+            return true;
+        }
     }
 
     @Override
     public FileStatus getFileStatus(Path path)
             throws IOException
     {
-        Location location = location(path);
-        Optional<FileStatus> file = existingFileStatus(location);
-        if (file.isPresent()) {
-            return file.get();
+        try (ThreadContextClassLoader _ = new ThreadContextClassLoader(nativeClassLoader)) {
+            Location location = location(path);
+            Optional<FileStatus> file = existingFileStatus(location);
+            if (file.isPresent()) {
+                return file.get();
+            }
+            if (isDirectory(location)) {
+                return directoryStatus(location);
+            }
+            throw new FileNotFoundException("File does not exist: " + path);
         }
-        if (isDirectory(location)) {
-            return directoryStatus(location);
-        }
-        throw new FileNotFoundException("File does not exist: " + path);
     }
 
     private Optional<FileStatus> existingFileStatus(Location location)

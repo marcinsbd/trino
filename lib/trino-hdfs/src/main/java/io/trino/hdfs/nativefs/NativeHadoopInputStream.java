@@ -14,6 +14,7 @@
 package io.trino.hdfs.nativefs;
 
 import io.trino.filesystem.TrinoInputStream;
+import io.trino.spi.classloader.ThreadContextClassLoader;
 import org.apache.hadoop.fs.FSInputStream;
 
 import java.io.IOException;
@@ -24,24 +25,30 @@ final class NativeHadoopInputStream
         extends FSInputStream
 {
     private final TrinoInputStream delegate;
+    private final ClassLoader nativeClassLoader;
 
-    NativeHadoopInputStream(TrinoInputStream delegate)
+    NativeHadoopInputStream(TrinoInputStream delegate, ClassLoader nativeClassLoader)
     {
         this.delegate = requireNonNull(delegate, "delegate is null");
+        this.nativeClassLoader = requireNonNull(nativeClassLoader, "nativeClassLoader is null");
     }
 
     @Override
     public void seek(long position)
             throws IOException
     {
-        delegate.seek(position);
+        try (ThreadContextClassLoader _ = new ThreadContextClassLoader(nativeClassLoader)) {
+            delegate.seek(position);
+        }
     }
 
     @Override
     public long getPos()
             throws IOException
     {
-        return delegate.getPosition();
+        try (ThreadContextClassLoader _ = new ThreadContextClassLoader(nativeClassLoader)) {
+            return delegate.getPosition();
+        }
     }
 
     @Override
@@ -54,34 +61,44 @@ final class NativeHadoopInputStream
     public int read()
             throws IOException
     {
-        return delegate.read();
+        try (ThreadContextClassLoader _ = new ThreadContextClassLoader(nativeClassLoader)) {
+            return delegate.read();
+        }
     }
 
     @Override
     public int read(byte[] buffer, int offset, int length)
             throws IOException
     {
-        return delegate.read(buffer, offset, length);
+        try (ThreadContextClassLoader _ = new ThreadContextClassLoader(nativeClassLoader)) {
+            return delegate.read(buffer, offset, length);
+        }
     }
 
     @Override
     public long skip(long n)
             throws IOException
     {
-        return delegate.skip(n);
+        try (ThreadContextClassLoader _ = new ThreadContextClassLoader(nativeClassLoader)) {
+            return delegate.skip(n);
+        }
     }
 
     @Override
     public int available()
             throws IOException
     {
-        return delegate.available();
+        try (ThreadContextClassLoader _ = new ThreadContextClassLoader(nativeClassLoader)) {
+            return delegate.available();
+        }
     }
 
     @Override
     public void close()
             throws IOException
     {
-        delegate.close();
+        try (ThreadContextClassLoader _ = new ThreadContextClassLoader(nativeClassLoader)) {
+            delegate.close();
+        }
     }
 }
