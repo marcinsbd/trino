@@ -71,5 +71,6 @@ public final class EnvSinglenodeHiveViewFs
                 container.withCopyFileToContainer(forHostPath(bucketDirectory), "/data/" + S3_BUCKET_NAME));
 
         builder.addConnector("hive", forHostPath(configDir.getPath("hive.properties")));
+        builder.addConnector("hive_without_staging", forHostPath(configDir.getPath("hive_without_staging.properties")));
     }
 }

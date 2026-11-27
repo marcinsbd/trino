@@ -125,6 +125,129 @@ public class TestHiveViewFsMountLinks
         }
     }
 
+    @Test(groups = {HIVE_VIEWFS, PROFILE_SPECIFIC_TESTS})
+    public void testInsertIntoTableOnViewFsMountLinkToS3()
+            throws Exception
+    {
+        String tableName = "test_viewfs_s3_mount_link_insert";
+        String objectPrefix = BUCKET_PREFIX + "/" + tableName + "/";
+        try (MinioClient minio = new MinioClient()) {
+            onHive().executeQuery("DROP TABLE IF EXISTS default." + tableName);
+            deleteObjects(minio, objectPrefix);
+            try {
+                onHive().executeQuery(
+                        """
+                        CREATE EXTERNAL TABLE default.%s (id INT, name STRING)
+                        ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+                        STORED AS TEXTFILE
+                        LOCATION '%s/%s'
+                        """.formatted(tableName, S3_MOUNT_LOCATION, tableName));
+                minio.putObject(BUCKET_NAME, "1,a\n".getBytes(UTF_8), objectPrefix + "data.csv");
+
+                onTrino().executeQuery("INSERT INTO hive.default." + tableName + " VALUES (2, 'b')");
+
+                assertThat(onTrino().executeQuery("SELECT id, name FROM hive.default." + tableName))
+                        .containsOnly(row(1, "a"), row(2, "b"));
+                // The new file is written through the mount link to S3
+                assertThat(minio.listObjects(BUCKET_NAME, objectPrefix)).hasSizeGreaterThan(1);
+            }
+            finally {
+                onHive().executeQuery("DROP TABLE IF EXISTS default." + tableName);
+                deleteObjects(minio, objectPrefix);
+            }
+        }
+    }
+
+    @Test(groups = {HIVE_VIEWFS, PROFILE_SPECIFIC_TESTS})
+    public void testCreateTableOnViewFsMountLinkToS3()
+            throws Exception
+    {
+        String tableName = "test_viewfs_s3_mount_link_create";
+        String objectPrefix = BUCKET_PREFIX + "/" + tableName + "/";
+        try (MinioClient minio = new MinioClient()) {
+            onTrino().executeQuery("DROP TABLE IF EXISTS hive.default." + tableName);
+            deleteObjects(minio, objectPrefix);
+            try {
+                onTrino().executeQuery(
+                        """
+                        CREATE TABLE hive.default.%s (id INTEGER, name VARCHAR)
+                        WITH (format = 'TEXTFILE', external_location = '%s/%s')
+                        """.formatted(tableName, S3_MOUNT_LOCATION, tableName));
+                onTrino().executeQuery("INSERT INTO hive.default." + tableName + " VALUES (1, 'a'), (2, 'b')");
+
+                assertThat(onTrino().executeQuery("SELECT id, name FROM hive.default." + tableName))
+                        .containsOnly(row(1, "a"), row(2, "b"));
+                assertThat(minio.listObjects(BUCKET_NAME, objectPrefix)).isNotEmpty();
+            }
+            finally {
+                onTrino().executeQuery("DROP TABLE IF EXISTS hive.default." + tableName);
+                deleteObjects(minio, objectPrefix);
+            }
+        }
+    }
+
+    @Test(groups = {HIVE_VIEWFS, PROFILE_SPECIFIC_TESTS})
+    public void testInsertWithoutStagingIntoTableOnViewFsMountLinkToS3()
+            throws Exception
+    {
+        String tableName = "test_viewfs_s3_mount_link_insert_without_staging";
+        String objectPrefix = BUCKET_PREFIX + "/" + tableName + "/";
+        try (MinioClient minio = new MinioClient()) {
+            onHive().executeQuery("DROP TABLE IF EXISTS default." + tableName);
+            deleteObjects(minio, objectPrefix);
+            try {
+                onHive().executeQuery(
+                        """
+                        CREATE EXTERNAL TABLE default.%s (id INT, name STRING)
+                        ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+                        STORED AS TEXTFILE
+                        LOCATION '%s/%s'
+                        """.formatted(tableName, S3_MOUNT_LOCATION, tableName));
+                minio.putObject(BUCKET_NAME, "1,a\n".getBytes(UTF_8), objectPrefix + "data.csv");
+
+                // hive_without_staging writes directly to the table directory, without a temporary staging directory
+                onTrino().executeQuery("INSERT INTO hive_without_staging.default." + tableName + " VALUES (2, 'b')");
+
+                assertThat(onTrino().executeQuery("SELECT id, name FROM hive.default." + tableName))
+                        .containsOnly(row(1, "a"), row(2, "b"));
+                assertThat(minio.listObjects(BUCKET_NAME, objectPrefix)).hasSizeGreaterThan(1);
+            }
+            finally {
+                onHive().executeQuery("DROP TABLE IF EXISTS default." + tableName);
+                deleteObjects(minio, objectPrefix);
+            }
+        }
+    }
+
+    @Test(groups = {HIVE_VIEWFS, PROFILE_SPECIFIC_TESTS})
+    public void testCreateTableAsSelectOnViewFsMountLinkToS3()
+            throws Exception
+    {
+        String tableName = "test_viewfs_s3_mount_link_ctas";
+        String objectPrefix = BUCKET_PREFIX + "/" + tableName + "/";
+        try (MinioClient minio = new MinioClient()) {
+            onTrino().executeQuery("DROP TABLE IF EXISTS hive.default." + tableName);
+            deleteObjects(minio, objectPrefix);
+            try {
+                // CREATE TABLE AS SELECT with an external location writes directly to the target directory
+                onTrino().executeQuery(
+                        """
+                        CREATE TABLE hive.default.%s
+                        WITH (format = 'TEXTFILE', external_location = '%s/%s')
+                        AS SELECT * FROM (VALUES (1, 'a'), (2, 'b')) t(id, name)
+                        """.formatted(tableName, S3_MOUNT_LOCATION, tableName));
+
+                assertThat(onTrino().executeQuery("SELECT id, name FROM hive.default." + tableName))
+                        .containsOnly(row(1, "a"), row(2, "b"));
+                assertThat(minio.listObjects(BUCKET_NAME, objectPrefix)).isNotEmpty();
+            }
+            finally {
+                onTrino().executeQuery("DROP TABLE IF EXISTS hive.default." + tableName);
+                deleteObjects(minio, objectPrefix);
+            }
+        }
+    }
+
     private static void deleteObjects(MinioClient minio, String prefix)
     {
         minio.listObjects(BUCKET_NAME, prefix).forEach(key -> minio.removeObject(BUCKET_NAME, key));
