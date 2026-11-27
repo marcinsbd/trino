@@ -220,6 +220,38 @@ public class TestHiveViewFsMountLinks
     }
 
     @Test(groups = {HIVE_VIEWFS, PROFILE_SPECIFIC_TESTS})
+    public void testInsertWithoutStagingIntoEmptyTableOnViewFsMountLinkToS3()
+            throws Exception
+    {
+        String tableName = "test_viewfs_s3_mount_link_insert_without_staging_empty";
+        String objectPrefix = BUCKET_PREFIX + "/" + tableName + "/";
+        try (MinioClient minio = new MinioClient()) {
+            onHive().executeQuery("DROP TABLE IF EXISTS default." + tableName);
+            deleteObjects(minio, objectPrefix);
+            try {
+                // No objects exist under the table location yet
+                onHive().executeQuery(
+                        """
+                        CREATE EXTERNAL TABLE default.%s (id INT, name STRING)
+                        ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+                        STORED AS TEXTFILE
+                        LOCATION '%s/%s'
+                        """.formatted(tableName, S3_MOUNT_LOCATION, tableName));
+
+                onTrino().executeQuery("INSERT INTO hive_without_staging.default." + tableName + " VALUES (1, 'a')");
+
+                assertThat(onTrino().executeQuery("SELECT id, name FROM hive.default." + tableName))
+                        .containsOnly(row(1, "a"));
+                assertThat(minio.listObjects(BUCKET_NAME, objectPrefix)).isNotEmpty();
+            }
+            finally {
+                onHive().executeQuery("DROP TABLE IF EXISTS default." + tableName);
+                deleteObjects(minio, objectPrefix);
+            }
+        }
+    }
+
+    @Test(groups = {HIVE_VIEWFS, PROFILE_SPECIFIC_TESTS})
     public void testCreateTableAsSelectOnViewFsMountLinkToS3()
             throws Exception
     {
