@@ -322,6 +322,35 @@ class TestHiveViewFsMountLinks
     }
 
     @Test
+    void testInsertWithoutStagingIntoEmptyTableOnViewFsMountLinkToS3(HiveViewFsEnvironment env)
+    {
+        String tableName = "test_viewfs_s3_mount_link_insert_without_staging_empty";
+        String objectPrefix = BUCKET_PREFIX + "/" + tableName + "/";
+        env.executeHiveUpdate("DROP TABLE IF EXISTS default." + tableName);
+        env.deleteS3Objects(objectPrefix);
+        try {
+            // No objects exist under the table location yet
+            env.executeHiveUpdate(
+                    """
+                    CREATE EXTERNAL TABLE default.%s (id INT, name STRING)
+                    ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+                    STORED AS TEXTFILE
+                    LOCATION '%s'
+                    """.formatted(tableName, env.hdfsLocation(S3_MOUNT_PATH + "/" + tableName)));
+
+            env.executeTrinoUpdate("INSERT INTO %s.default.%s VALUES (1, 'a')".formatted(CATALOG_WITHOUT_STAGING, tableName));
+
+            assertThat(env.executeTrino("SELECT id, name FROM hive.default." + tableName))
+                    .containsOnly(row(1, "a"));
+            Assertions.assertThat(env.listS3Objects(objectPrefix)).isNotEmpty();
+        }
+        finally {
+            env.executeHiveUpdate("DROP TABLE IF EXISTS default." + tableName);
+            env.deleteS3Objects(objectPrefix);
+        }
+    }
+
+    @Test
     void testCreateTableAsSelectOnViewFsMountLinkToS3(HiveViewFsEnvironment env)
     {
         String tableName = "test_viewfs_s3_mount_link_ctas";
