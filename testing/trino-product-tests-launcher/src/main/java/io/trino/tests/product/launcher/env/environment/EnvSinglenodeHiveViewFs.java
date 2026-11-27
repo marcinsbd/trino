@@ -67,11 +67,14 @@ public final class EnvSinglenodeHiveViewFs
         catch (IOException e) {
             throw new UncheckedIOException(e);
         }
-        builder.configureContainer(MINIO_CONTAINER_NAME, container ->
-                container.withCopyFileToContainer(forHostPath(bucketDirectory), "/data/" + S3_BUCKET_NAME));
+        builder.configureContainer(MINIO_CONTAINER_NAME, container -> container
+                .withCopyFileToContainer(forHostPath(bucketDirectory), "/data/" + S3_BUCKET_NAME)
+                // A static KMS key, so that MinIO supports SSE-S3, used by the hive_extended_settings catalog
+                .withEnv("MINIO_KMS_SECRET_KEY", "viewfs-test-key:dmlld2ZzLXRlc3Qta21zLWtleS0zMi1ieXRlcy1vayE="));
 
         builder.addConnector("hive", forHostPath(configDir.getPath("hive.properties")));
         builder.addConnector("hive_without_staging", forHostPath(configDir.getPath("hive_without_staging.properties")));
         builder.addConnector("hive_recursive_directories", forHostPath(configDir.getPath("hive_recursive_directories.properties")));
+        builder.addConnector("hive_extended_settings", forHostPath(configDir.getPath("hive_extended_settings.properties")));
     }
 }

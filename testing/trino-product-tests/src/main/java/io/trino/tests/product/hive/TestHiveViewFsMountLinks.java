@@ -18,6 +18,7 @@ import io.trino.testing.minio.MinioClient;
 import org.testng.annotations.Test;
 
 import static io.trino.tempto.assertions.QueryAssert.Row.row;
+import static io.trino.tempto.assertions.QueryAssert.assertQueryFailure;
 import static io.trino.tests.product.TestGroups.HIVE_VIEWFS;
 import static io.trino.tests.product.TestGroups.PROFILE_SPECIFIC_TESTS;
 import static io.trino.tests.product.utils.QueryExecutors.onHive;
@@ -42,6 +43,8 @@ public class TestHiveViewFsMountLinks
     private static final String BUCKET_PREFIX = "s3_data";
     // ViewFS mounts this path to s3a://viewfs-bucket/s3_data, see singlenode-hive-viewfs/viewfs-core-site.xml
     private static final String S3_MOUNT_LOCATION = "hdfs://hadoop-master:9000/tmp/viewfs/s3_data";
+    // Catalog with a combination of Hive settings commonly used together with ViewFS, see singlenode-hive-viewfs/hive_extended_settings.properties
+    private static final String EXTENDED_SETTINGS_CATALOG = "hive_extended_settings";
 
     @Test(groups = {HIVE_VIEWFS, PROFILE_SPECIFIC_TESTS})
     public void testReadTableOnViewFsHdfsFallback()
@@ -314,6 +317,164 @@ public class TestHiveViewFsMountLinks
             }
             finally {
                 onTrino().executeQuery("DROP TABLE IF EXISTS hive.default." + tableName);
+                deleteObjects(minio, objectPrefix);
+            }
+        }
+    }
+
+    @Test(groups = {HIVE_VIEWFS, PROFILE_SPECIFIC_TESTS})
+    public void testExtendedSettingsPartitionedAvroTable()
+            throws Exception
+    {
+        String writerTableName = "test_viewfs_extended_avro_writer";
+        String tableName = "test_viewfs_extended_avro";
+        String location = S3_MOUNT_LOCATION + "/" + tableName;
+        String objectPrefix = BUCKET_PREFIX + "/" + tableName + "/";
+        try (MinioClient minio = new MinioClient()) {
+            onTrino().executeQuery("DROP TABLE IF EXISTS %s.default.%s".formatted(EXTENDED_SETTINGS_CATALOG, writerTableName));
+            onHive().executeQuery("DROP TABLE IF EXISTS default." + tableName);
+            deleteObjects(minio, objectPrefix);
+            try {
+                // Write Avro data files through the mount link
+                onTrino().executeQuery(
+                        """
+                        CREATE TABLE %s.default.%s
+                        WITH (format = 'AVRO', external_location = '%s', partitioned_by = ARRAY['region', 'category', 'event_date'])
+                        AS SELECT CAST(id AS integer) id, CAST(name AS varchar) name, CAST(region AS varchar) region, CAST(category AS varchar) category, CAST(event_date AS varchar) event_date
+                        FROM (VALUES (1, 'a', 'eu', 'x', '2026-11-01'), (2, 'b', 'eu', 'x', '2026-11-02'), (3, 'c', 'eu', 'y', '2026-11-01'), (4, 'd', 'us', 'x', '2026-11-01'), (5, 'e', 'us', 'x', '2026-11-01'))
+                            t(id, name, region, category, event_date)
+                        """.formatted(EXTENDED_SETTINGS_CATALOG, writerTableName, location));
+                onTrino().executeQuery("DROP TABLE %s.default.%s".formatted(EXTENDED_SETTINGS_CATALOG, writerTableName));
+
+                // Define the table in Hive, discover its partitions, and read it
+                onHive().executeQuery(
+                        """
+                        CREATE EXTERNAL TABLE default.%s (id INT, name STRING)
+                        PARTITIONED BY (region STRING, category STRING, event_date STRING)
+                        STORED AS AVRO
+                        LOCATION '%s'
+                        """.formatted(tableName, location));
+                onTrino().executeQuery("CALL %s.system.sync_partition_metadata('default', '%s', 'FULL')".formatted(EXTENDED_SETTINGS_CATALOG, tableName));
+
+                assertThat(onTrino().executeQuery("SELECT count(*) FROM %s.default.%s".formatted(EXTENDED_SETTINGS_CATALOG, tableName)))
+                        .containsOnly(row(5L));
+                assertThat(onTrino().executeQuery("SELECT region, category, event_date, count(*) FROM %s.default.%s GROUP BY 1, 2, 3".formatted(EXTENDED_SETTINGS_CATALOG, tableName)))
+                        .containsOnly(
+                                row("eu", "x", "2026-11-01", 1L),
+                                row("eu", "x", "2026-11-02", 1L),
+                                row("eu", "y", "2026-11-01", 1L),
+                                row("us", "x", "2026-11-01", 2L));
+                assertThat(onTrino().executeQuery("SELECT id, name FROM %s.default.%s WHERE region = 'us'".formatted(EXTENDED_SETTINGS_CATALOG, tableName)))
+                        .containsOnly(row(4, "d"), row(5, "e"));
+            }
+            finally {
+                onTrino().executeQuery("DROP TABLE IF EXISTS %s.default.%s".formatted(EXTENDED_SETTINGS_CATALOG, writerTableName));
+                onHive().executeQuery("DROP TABLE IF EXISTS default." + tableName);
+                deleteObjects(minio, objectPrefix);
+            }
+        }
+    }
+
+    @Test(groups = {HIVE_VIEWFS, PROFILE_SPECIFIC_TESTS})
+    public void testExtendedSettingsParquetColumnNames()
+            throws Exception
+    {
+        String writerTableName = "test_viewfs_extended_parquet_writer";
+        String tableName = "test_viewfs_extended_parquet";
+        String location = S3_MOUNT_LOCATION + "/" + tableName;
+        String objectPrefix = BUCKET_PREFIX + "/" + tableName + "/";
+        try (MinioClient minio = new MinioClient()) {
+            onTrino().executeQuery("DROP TABLE IF EXISTS %s.default.%s".formatted(EXTENDED_SETTINGS_CATALOG, writerTableName));
+            onHive().executeQuery("DROP TABLE IF EXISTS default." + tableName);
+            deleteObjects(minio, objectPrefix);
+            try {
+                onTrino().executeQuery(
+                        """
+                        CREATE TABLE %s.default.%s
+                        WITH (format = 'PARQUET', external_location = '%s')
+                        AS SELECT CAST(id AS integer) id, CAST(name AS varchar) name FROM (VALUES (1, 'a'), (2, 'b')) t(id, name)
+                        """.formatted(EXTENDED_SETTINGS_CATALOG, writerTableName, location));
+                onTrino().executeQuery("DROP TABLE %s.default.%s".formatted(EXTENDED_SETTINGS_CATALOG, writerTableName));
+
+                // Columns declared in a different order than in the files are matched by name
+                onHive().executeQuery(
+                        """
+                        CREATE EXTERNAL TABLE default.%s (name STRING, id INT)
+                        STORED AS PARQUET
+                        LOCATION '%s'
+                        """.formatted(tableName, location));
+
+                assertThat(onTrino().executeQuery("SELECT id, name FROM %s.default.%s".formatted(EXTENDED_SETTINGS_CATALOG, tableName)))
+                        .containsOnly(row(1, "a"), row(2, "b"));
+            }
+            finally {
+                onTrino().executeQuery("DROP TABLE IF EXISTS %s.default.%s".formatted(EXTENDED_SETTINGS_CATALOG, writerTableName));
+                onHive().executeQuery("DROP TABLE IF EXISTS default." + tableName);
+                deleteObjects(minio, objectPrefix);
+            }
+        }
+    }
+
+    @Test(groups = {HIVE_VIEWFS, PROFILE_SPECIFIC_TESTS})
+    public void testExtendedSettingsIgnoreAbsentPartitions()
+            throws Exception
+    {
+        String tableName = "test_viewfs_extended_absent_partitions";
+        String location = S3_MOUNT_LOCATION + "/" + tableName;
+        String objectPrefix = BUCKET_PREFIX + "/" + tableName + "/";
+        try (MinioClient minio = new MinioClient()) {
+            onTrino().executeQuery("DROP TABLE IF EXISTS %s.default.%s".formatted(EXTENDED_SETTINGS_CATALOG, tableName));
+            deleteObjects(minio, objectPrefix);
+            try {
+                onTrino().executeQuery(
+                        """
+                        CREATE TABLE %s.default.%s
+                        WITH (format = 'TEXTFILE', external_location = '%s', partitioned_by = ARRAY['event_date'])
+                        AS SELECT CAST(id AS integer) id, CAST(event_date AS varchar) event_date FROM (VALUES (1, '2026-11-01'), (2, '2026-11-02')) t(id, event_date)
+                        """.formatted(EXTENDED_SETTINGS_CATALOG, tableName, location));
+                // Remove the data of one partition, which stays registered in the metastore
+                deleteObjects(minio, objectPrefix + "event_date=2026-11-02/");
+
+                assertThat(onTrino().executeQuery("SELECT id FROM %s.default.%s".formatted(EXTENDED_SETTINGS_CATALOG, tableName)))
+                        .containsOnly(row(1));
+                assertQueryFailure(() -> onTrino().executeQuery("SELECT id FROM hive.default." + tableName))
+                        .hasMessageContaining("Partition location does not exist");
+            }
+            finally {
+                onTrino().executeQuery("DROP TABLE IF EXISTS %s.default.%s".formatted(EXTENDED_SETTINGS_CATALOG, tableName));
+                deleteObjects(minio, objectPrefix);
+            }
+        }
+    }
+
+    @Test(groups = {HIVE_VIEWFS, PROFILE_SPECIFIC_TESTS})
+    public void testExtendedSettingsHiveView()
+            throws Exception
+    {
+        String tableName = "test_viewfs_extended_view_table";
+        String viewName = "test_viewfs_extended_view";
+        String objectPrefix = BUCKET_PREFIX + "/" + tableName + "/";
+        try (MinioClient minio = new MinioClient()) {
+            onHive().executeQuery("DROP VIEW IF EXISTS default." + viewName);
+            onHive().executeQuery("DROP TABLE IF EXISTS default." + tableName);
+            deleteObjects(minio, objectPrefix);
+            try {
+                onHive().executeQuery(
+                        """
+                        CREATE EXTERNAL TABLE default.%s (id INT, name STRING)
+                        ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+                        STORED AS TEXTFILE
+                        LOCATION '%s/%s'
+                        """.formatted(tableName, S3_MOUNT_LOCATION, tableName));
+                minio.putObject(BUCKET_NAME, "1,a\n2,b\n".getBytes(UTF_8), objectPrefix + "data.csv");
+                onHive().executeQuery("CREATE VIEW default.%s AS SELECT id, name FROM default.%s WHERE id > 1".formatted(viewName, tableName));
+
+                assertThat(onTrino().executeQuery("SELECT id, name FROM %s.default.%s".formatted(EXTENDED_SETTINGS_CATALOG, viewName)))
+                        .containsOnly(row(2, "b"));
+            }
+            finally {
+                onHive().executeQuery("DROP VIEW IF EXISTS default." + viewName);
+                onHive().executeQuery("DROP TABLE IF EXISTS default." + tableName);
                 deleteObjects(minio, objectPrefix);
             }
         }
