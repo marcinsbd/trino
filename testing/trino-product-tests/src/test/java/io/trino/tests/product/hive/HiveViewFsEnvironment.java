@@ -63,6 +63,7 @@ public class HiveViewFsEnvironment
     public static final String CATALOG_WITH_UNREACHABLE_S3 = "hive_unreachable_s3";
     public static final String CATALOG_WITHOUT_STAGING = "hive_without_staging";
     public static final String CATALOG_WITH_RECURSIVE_DIRECTORIES = "hive_recursive_directories";
+    public static final String EXTENDED_SETTINGS_CATALOG = "hive_extended_settings";
 
     private static final String VIEWFS_CORE_SITE = "/etc/trino/viewfs-core-site.xml";
 
@@ -102,6 +103,28 @@ public class HiveViewFsEnvironment
                         .put("hive.non-managed-table-writes-enabled", "true")
                         // Native S3 serves the s3a:// mount link through the Hadoop file system bridge
                         .withFlociS3()
+                        .build())
+                // A combination of Hive settings commonly used together with ViewFS, including S3
+                // path-style access, timeouts, part size and SSE-S3
+                .withCatalog(EXTENDED_SETTINGS_CATALOG, hiveCatalog(HiveCatalogPropertiesBuilder.hadoopMetastoreUri())
+                        .put("hive.parquet.use-column-names", "true")
+                        .put("hive.recursive-directories", "true")
+                        .put("hive.metastore.thrift.impersonation.enabled", "false")
+                        .put("hive.hdfs.impersonation.enabled", "false")
+                        .put("fs.hadoop.enabled", "true")
+                        .put("hive.non-managed-table-writes-enabled", "true")
+                        .put("hive.config.resources", "/etc/trino/hdfs-site.xml," + VIEWFS_CORE_SITE)
+                        .put("hive.ignore-absent-partitions", "true")
+                        .put("hive.hive-views.enabled", "true")
+                        .put("hive.hive-views.run-as-invoker", "true")
+                        .put("hive.metastore-cache-ttl", "6h")
+                        .put("hive.metastore-refresh-interval", "2h")
+                        .put("hive.metastore-cache-maximum-size", "10000000")
+                        .withFlociS3()
+                        .put("s3.path-style-access", "true")
+                        .put("s3.socket-connect-timeout", "30s")
+                        .put("s3.streaming.part-size", "128MB")
+                        .put("s3.sse.type", "S3")
                         .build())
                 // Reads files in subdirectories of table and partition directories
                 .withCatalog(CATALOG_WITH_RECURSIVE_DIRECTORIES, hiveCatalog(HiveCatalogPropertiesBuilder.hadoopMetastoreUri())

@@ -26,6 +26,7 @@ import static io.trino.tests.product.hive.HiveViewFsEnvironment.CATALOG_WITHOUT_
 import static io.trino.tests.product.hive.HiveViewFsEnvironment.CATALOG_WITHOUT_STAGING;
 import static io.trino.tests.product.hive.HiveViewFsEnvironment.CATALOG_WITH_RECURSIVE_DIRECTORIES;
 import static io.trino.tests.product.hive.HiveViewFsEnvironment.CATALOG_WITH_UNREACHABLE_S3;
+import static io.trino.tests.product.hive.HiveViewFsEnvironment.EXTENDED_SETTINGS_CATALOG;
 import static io.trino.tests.product.hive.HiveViewFsEnvironment.S3_MOUNT_PATH;
 import static io.trino.tests.product.hive.HiveViewFsEnvironment.VIEWFS_S3_MOUNT_PATH;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -409,6 +410,151 @@ class TestHiveViewFsMountLinks
         }
         finally {
             env.executeTrinoUpdate("DROP TABLE IF EXISTS hive.default." + tableName);
+            env.deleteS3Objects(objectPrefix);
+        }
+    }
+
+    @Test
+    void testExtendedSettingsPartitionedAvroTable(HiveViewFsEnvironment env)
+    {
+        String writerTableName = "test_viewfs_extended_avro_writer";
+        String tableName = "test_viewfs_extended_avro";
+        String location = env.hdfsLocation(S3_MOUNT_PATH + "/" + tableName);
+        String objectPrefix = BUCKET_PREFIX + "/" + tableName + "/";
+        env.executeTrinoUpdate("DROP TABLE IF EXISTS %s.default.%s".formatted(EXTENDED_SETTINGS_CATALOG, writerTableName));
+        env.executeHiveUpdate("DROP TABLE IF EXISTS default." + tableName);
+        env.deleteS3Objects(objectPrefix);
+        try {
+            // Write Avro data files through the mount link
+            env.executeTrinoUpdate(
+                    """
+                    CREATE TABLE %s.default.%s
+                    WITH (format = 'AVRO', external_location = '%s', partitioned_by = ARRAY['region', 'category', 'event_date'])
+                    AS SELECT CAST(id AS integer) id, CAST(name AS varchar) name, CAST(region AS varchar) region, CAST(category AS varchar) category, CAST(event_date AS varchar) event_date
+                    FROM (VALUES (1, 'a', 'eu', 'x', '2026-11-01'), (2, 'b', 'eu', 'x', '2026-11-02'), (3, 'c', 'eu', 'y', '2026-11-01'), (4, 'd', 'us', 'x', '2026-11-01'), (5, 'e', 'us', 'x', '2026-11-01'))
+                        t(id, name, region, category, event_date)
+                    """.formatted(EXTENDED_SETTINGS_CATALOG, writerTableName, location));
+            env.executeTrinoUpdate("DROP TABLE %s.default.%s".formatted(EXTENDED_SETTINGS_CATALOG, writerTableName));
+
+            // Define the table in Hive, discover its partitions, and read it
+            env.executeHiveUpdate(
+                    """
+                    CREATE EXTERNAL TABLE default.%s (id INT, name STRING)
+                    PARTITIONED BY (region STRING, category STRING, event_date STRING)
+                    STORED AS AVRO
+                    LOCATION '%s'
+                    """.formatted(tableName, location));
+            env.executeTrinoUpdate("CALL %s.system.sync_partition_metadata('default', '%s', 'FULL')".formatted(EXTENDED_SETTINGS_CATALOG, tableName));
+
+            assertThat(env.executeTrino("SELECT count(*) FROM %s.default.%s".formatted(EXTENDED_SETTINGS_CATALOG, tableName)))
+                    .containsOnly(row(5L));
+            assertThat(env.executeTrino("SELECT region, category, event_date, count(*) FROM %s.default.%s GROUP BY 1, 2, 3".formatted(EXTENDED_SETTINGS_CATALOG, tableName)))
+                    .containsOnly(
+                            row("eu", "x", "2026-11-01", 1L),
+                            row("eu", "x", "2026-11-02", 1L),
+                            row("eu", "y", "2026-11-01", 1L),
+                            row("us", "x", "2026-11-01", 2L));
+            assertThat(env.executeTrino("SELECT id, name FROM %s.default.%s WHERE region = 'us'".formatted(EXTENDED_SETTINGS_CATALOG, tableName)))
+                    .containsOnly(row(4, "d"), row(5, "e"));
+        }
+        finally {
+            env.executeTrinoUpdate("DROP TABLE IF EXISTS %s.default.%s".formatted(EXTENDED_SETTINGS_CATALOG, writerTableName));
+            env.executeHiveUpdate("DROP TABLE IF EXISTS default." + tableName);
+            env.deleteS3Objects(objectPrefix);
+        }
+    }
+
+    @Test
+    void testExtendedSettingsParquetColumnNames(HiveViewFsEnvironment env)
+    {
+        String writerTableName = "test_viewfs_extended_parquet_writer";
+        String tableName = "test_viewfs_extended_parquet";
+        String location = env.hdfsLocation(S3_MOUNT_PATH + "/" + tableName);
+        String objectPrefix = BUCKET_PREFIX + "/" + tableName + "/";
+        env.executeTrinoUpdate("DROP TABLE IF EXISTS %s.default.%s".formatted(EXTENDED_SETTINGS_CATALOG, writerTableName));
+        env.executeHiveUpdate("DROP TABLE IF EXISTS default." + tableName);
+        env.deleteS3Objects(objectPrefix);
+        try {
+            env.executeTrinoUpdate(
+                    """
+                    CREATE TABLE %s.default.%s
+                    WITH (format = 'PARQUET', external_location = '%s')
+                    AS SELECT CAST(id AS integer) id, CAST(name AS varchar) name FROM (VALUES (1, 'a'), (2, 'b')) t(id, name)
+                    """.formatted(EXTENDED_SETTINGS_CATALOG, writerTableName, location));
+            env.executeTrinoUpdate("DROP TABLE %s.default.%s".formatted(EXTENDED_SETTINGS_CATALOG, writerTableName));
+
+            // Columns declared in a different order than in the files are matched by name
+            env.executeHiveUpdate(
+                    """
+                    CREATE EXTERNAL TABLE default.%s (name STRING, id INT)
+                    STORED AS PARQUET
+                    LOCATION '%s'
+                    """.formatted(tableName, location));
+
+            assertThat(env.executeTrino("SELECT id, name FROM %s.default.%s".formatted(EXTENDED_SETTINGS_CATALOG, tableName)))
+                    .containsOnly(row(1, "a"), row(2, "b"));
+        }
+        finally {
+            env.executeTrinoUpdate("DROP TABLE IF EXISTS %s.default.%s".formatted(EXTENDED_SETTINGS_CATALOG, writerTableName));
+            env.executeHiveUpdate("DROP TABLE IF EXISTS default." + tableName);
+            env.deleteS3Objects(objectPrefix);
+        }
+    }
+
+    @Test
+    void testExtendedSettingsIgnoreAbsentPartitions(HiveViewFsEnvironment env)
+    {
+        String tableName = "test_viewfs_extended_absent_partitions";
+        String objectPrefix = BUCKET_PREFIX + "/" + tableName + "/";
+        env.executeTrinoUpdate("DROP TABLE IF EXISTS %s.default.%s".formatted(EXTENDED_SETTINGS_CATALOG, tableName));
+        env.deleteS3Objects(objectPrefix);
+        try {
+            env.executeTrinoUpdate(
+                    """
+                    CREATE TABLE %s.default.%s
+                    WITH (format = 'TEXTFILE', external_location = '%s', partitioned_by = ARRAY['event_date'])
+                    AS SELECT CAST(id AS integer) id, CAST(event_date AS varchar) event_date FROM (VALUES (1, '2026-11-01'), (2, '2026-11-02')) t(id, event_date)
+                    """.formatted(EXTENDED_SETTINGS_CATALOG, tableName, env.hdfsLocation(S3_MOUNT_PATH + "/" + tableName)));
+            // Remove the data of one partition, which stays registered in the metastore
+            env.deleteS3Objects(objectPrefix + "event_date=2026-11-02/");
+
+            assertThat(env.executeTrino("SELECT id FROM %s.default.%s".formatted(EXTENDED_SETTINGS_CATALOG, tableName)))
+                    .containsOnly(row(1));
+            assertThatThrownBy(() -> env.executeTrino("SELECT id FROM hive.default." + tableName))
+                    .hasMessageContaining("Partition location does not exist");
+        }
+        finally {
+            env.executeTrinoUpdate("DROP TABLE IF EXISTS %s.default.%s".formatted(EXTENDED_SETTINGS_CATALOG, tableName));
+            env.deleteS3Objects(objectPrefix);
+        }
+    }
+
+    @Test
+    void testExtendedSettingsHiveView(HiveViewFsEnvironment env)
+    {
+        String tableName = "test_viewfs_extended_view_table";
+        String viewName = "test_viewfs_extended_view";
+        String objectPrefix = BUCKET_PREFIX + "/" + tableName + "/";
+        env.executeHiveUpdate("DROP VIEW IF EXISTS default." + viewName);
+        env.executeHiveUpdate("DROP TABLE IF EXISTS default." + tableName);
+        env.deleteS3Objects(objectPrefix);
+        try {
+            env.executeHiveUpdate(
+                    """
+                    CREATE EXTERNAL TABLE default.%s (id INT, name STRING)
+                    ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+                    STORED AS TEXTFILE
+                    LOCATION '%s'
+                    """.formatted(tableName, env.hdfsLocation(S3_MOUNT_PATH + "/" + tableName)));
+            env.putS3Object(objectPrefix + "data.csv", "1,a\n2,b\n");
+            env.executeHiveUpdate("CREATE VIEW default.%s AS SELECT id, name FROM default.%s WHERE id > 1".formatted(viewName, tableName));
+
+            assertThat(env.executeTrino("SELECT id, name FROM %s.default.%s".formatted(EXTENDED_SETTINGS_CATALOG, viewName)))
+                    .containsOnly(row(2, "b"));
+        }
+        finally {
+            env.executeHiveUpdate("DROP VIEW IF EXISTS default." + viewName);
+            env.executeHiveUpdate("DROP TABLE IF EXISTS default." + tableName);
             env.deleteS3Objects(objectPrefix);
         }
     }
