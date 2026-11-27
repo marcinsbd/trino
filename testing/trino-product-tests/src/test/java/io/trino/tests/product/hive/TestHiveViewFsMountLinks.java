@@ -22,6 +22,7 @@ import static io.trino.testing.containers.environment.QueryResultAssert.assertTh
 import static io.trino.testing.containers.environment.Row.row;
 import static io.trino.tests.product.hive.HiveViewFsEnvironment.BUCKET_PREFIX;
 import static io.trino.tests.product.hive.HiveViewFsEnvironment.CATALOG_WITHOUT_NATIVE_S3;
+import static io.trino.tests.product.hive.HiveViewFsEnvironment.CATALOG_WITH_UNREACHABLE_S3;
 import static io.trino.tests.product.hive.HiveViewFsEnvironment.S3_MOUNT_PATH;
 import static io.trino.tests.product.hive.HiveViewFsEnvironment.VIEWFS_S3_MOUNT_PATH;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -244,6 +245,39 @@ class TestHiveViewFsMountLinks
             // Without native S3 in the catalog, nothing provides a Hadoop file system for s3a://
             assertThatThrownBy(() -> env.executeTrino("SELECT id, name FROM %s.default.%s".formatted(CATALOG_WITHOUT_NATIVE_S3, tableName)))
                     .hasMessageContaining("Class org.apache.hadoop.fs.s3a.S3AFileSystem not found");
+        }
+        finally {
+            env.executeHiveUpdate("DROP TABLE IF EXISTS default." + tableName);
+            env.deleteS3Objects(objectPrefix);
+        }
+    }
+
+    @Test
+    void testCatalogsDoNotShareViewFsMountLinkFileSystems(HiveViewFsEnvironment env)
+    {
+        String tableName = "test_viewfs_s3_mount_link_two_catalogs";
+        String objectPrefix = BUCKET_PREFIX + "/" + tableName + "/";
+        env.executeHiveUpdate("DROP TABLE IF EXISTS default." + tableName);
+        env.deleteS3Objects(objectPrefix);
+        try {
+            env.executeHiveUpdate(
+                    """
+                    CREATE EXTERNAL TABLE default.%s (id INT, name STRING)
+                    ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+                    STORED AS TEXTFILE
+                    LOCATION '%s'
+                    """.formatted(tableName, env.hdfsLocation(S3_MOUNT_PATH + "/" + tableName)));
+            env.putS3Object(objectPrefix + "data.csv", "1,a\n");
+
+            // Both catalogs read the same mount link as the same user. Each must use its own native S3
+            // settings: a file system shared with the first catalog would make the second read succeed.
+            assertThat(env.executeTrino("SELECT id, name FROM hive.default." + tableName))
+                    .containsOnly(row(1, "a"));
+            // The S3 connection error is not part of the query error message, only the listing that failed
+            assertThatThrownBy(() -> env.executeTrino("SELECT id, name FROM %s.default.%s".formatted(CATALOG_WITH_UNREACHABLE_S3, tableName)))
+                    .hasMessageContaining("Failed to list directory: " + env.hdfsLocation(S3_MOUNT_PATH + "/" + tableName));
+            assertThat(env.executeTrino("SELECT id, name FROM hive.default." + tableName))
+                    .containsOnly(row(1, "a"));
         }
         finally {
             env.executeHiveUpdate("DROP TABLE IF EXISTS default." + tableName);

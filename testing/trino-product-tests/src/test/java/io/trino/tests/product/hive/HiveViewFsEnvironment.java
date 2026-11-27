@@ -39,8 +39,9 @@ import static java.nio.charset.StandardCharsets.UTF_8;
  *   <li>Floci container providing S3-compatible object storage</li>
  *   <li>Trino container with a {@code core-site.xml} that enables the ViewFS overload scheme for
  *       {@code hdfs://}, and defines a {@code viewfs://cluster} mount table</li>
- *   <li>The "hive" catalog with the Hadoop file system and native S3, and the
- *       "hive_without_native_s3" catalog with the Hadoop file system only</li>
+ *   <li>The "hive" catalog with the Hadoop file system and native S3, the
+ *       "hive_without_native_s3" catalog with the Hadoop file system only, and the
+ *       "hive_unreachable_s3" catalog with native S3 pointing to an endpoint that refuses connections</li>
  * </ul>
  * <p>
  * The overload scheme mount table maps {@link #S3_MOUNT_PATH} to {@code s3a://<bucket>/<prefix>}, and
@@ -58,6 +59,7 @@ public class HiveViewFsEnvironment
     public static final String VIEWFS_MOUNT_TABLE = "cluster";
     public static final String VIEWFS_S3_MOUNT_PATH = "/s3_data";
     public static final String CATALOG_WITHOUT_NATIVE_S3 = "hive_without_native_s3";
+    public static final String CATALOG_WITH_UNREACHABLE_S3 = "hive_unreachable_s3";
 
     private static final String VIEWFS_CORE_SITE = "/etc/trino/viewfs-core-site.xml";
 
@@ -102,6 +104,17 @@ public class HiveViewFsEnvironment
                         .withCommonProperties()
                         .put("fs.hadoop.enabled", "true")
                         .put("hive.config.resources", "/etc/trino/hdfs-site.xml," + VIEWFS_CORE_SITE)
+                        .build())
+                // Same ViewFS mount tables, but native S3 that cannot reach the storage, to verify that
+                // catalogs do not share the Hadoop file systems serving the mount links
+                .withCatalog(CATALOG_WITH_UNREACHABLE_S3, hiveCatalog(HiveCatalogPropertiesBuilder.hadoopMetastoreUri())
+                        .withCommonProperties()
+                        .put("fs.hadoop.enabled", "true")
+                        .put("hive.config.resources", "/etc/trino/hdfs-site.xml," + VIEWFS_CORE_SITE)
+                        .withFlociS3()
+                        .put("s3.endpoint", "http://127.0.0.1:1")
+                        .put("s3.max-error-retries", "1")
+                        .put("s3.socket-connect-timeout", "1s")
                         .build())
                 .withCatalog("tpch", Map.of("connector.name", "tpch"))
                 .build();
