@@ -24,6 +24,7 @@ import static io.trino.testing.containers.environment.Row.row;
 import static io.trino.tests.product.hive.HiveViewFsEnvironment.BUCKET_PREFIX;
 import static io.trino.tests.product.hive.HiveViewFsEnvironment.CATALOG_WITHOUT_NATIVE_S3;
 import static io.trino.tests.product.hive.HiveViewFsEnvironment.CATALOG_WITHOUT_STAGING;
+import static io.trino.tests.product.hive.HiveViewFsEnvironment.CATALOG_WITH_RECURSIVE_DIRECTORIES;
 import static io.trino.tests.product.hive.HiveViewFsEnvironment.CATALOG_WITH_UNREACHABLE_S3;
 import static io.trino.tests.product.hive.HiveViewFsEnvironment.S3_MOUNT_PATH;
 import static io.trino.tests.product.hive.HiveViewFsEnvironment.VIEWFS_S3_MOUNT_PATH;
@@ -224,6 +225,42 @@ class TestHiveViewFsMountLinks
 
             assertThat(env.executeTrino("SELECT id, name FROM hive.default." + tableName))
                     .containsOnly(row(1, "a"), row(2, "b"));
+        }
+        finally {
+            env.executeHiveUpdate("DROP TABLE IF EXISTS default." + tableName);
+            env.deleteS3Objects(objectPrefix);
+        }
+    }
+
+    @Test
+    void testReadTableWithRecursiveDirectoriesOnViewFsMountLinkToS3(HiveViewFsEnvironment env)
+    {
+        String tableName = "test_viewfs_s3_mount_link_recursive_directories";
+        String objectPrefix = BUCKET_PREFIX + "/" + tableName + "/";
+        env.executeHiveUpdate("DROP TABLE IF EXISTS default." + tableName);
+        env.deleteS3Objects(objectPrefix);
+        try {
+            env.executeHiveUpdate(
+                    """
+                    CREATE EXTERNAL TABLE default.%s (id INT, name STRING)
+                    ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+                    STORED AS TEXTFILE
+                    LOCATION '%s'
+                    """.formatted(tableName, env.hdfsLocation(S3_MOUNT_PATH + "/" + tableName)));
+            env.putS3Object(objectPrefix + "data.csv", "1,top\n");
+            env.putS3Object(objectPrefix + "subdirectory/nested.csv", "2,nested\n");
+            env.putS3Object(objectPrefix + "subdirectory/deeper/deep.csv", "3,deep\n");
+            // An empty directory, represented only by a directory marker object, and files that are not data
+            env.putS3Object(objectPrefix + "empty_subdirectory/", "");
+            env.putS3Object(objectPrefix + "_SUCCESS", "");
+            env.putS3Object(objectPrefix + ".hidden", "9,hidden\n");
+
+            // With recursive directories, files in all subdirectories are read through ViewFS
+            assertThat(env.executeTrino("SELECT id, name FROM %s.default.%s".formatted(CATALOG_WITH_RECURSIVE_DIRECTORIES, tableName)))
+                    .containsOnly(row(1, "top"), row(2, "nested"), row(3, "deep"));
+            // Without, only the files directly in the table directory are read
+            assertThat(env.executeTrino("SELECT id, name FROM hive.default." + tableName))
+                    .containsOnly(row(1, "top"));
         }
         finally {
             env.executeHiveUpdate("DROP TABLE IF EXISTS default." + tableName);

@@ -62,6 +62,7 @@ public class HiveViewFsEnvironment
     public static final String CATALOG_WITHOUT_NATIVE_S3 = "hive_without_native_s3";
     public static final String CATALOG_WITH_UNREACHABLE_S3 = "hive_unreachable_s3";
     public static final String CATALOG_WITHOUT_STAGING = "hive_without_staging";
+    public static final String CATALOG_WITH_RECURSIVE_DIRECTORIES = "hive_recursive_directories";
 
     private static final String VIEWFS_CORE_SITE = "/etc/trino/viewfs-core-site.xml";
 
@@ -100,6 +101,14 @@ public class HiveViewFsEnvironment
                         .put("hive.config.resources", "/etc/trino/hdfs-site.xml," + VIEWFS_CORE_SITE)
                         .put("hive.non-managed-table-writes-enabled", "true")
                         // Native S3 serves the s3a:// mount link through the Hadoop file system bridge
+                        .withFlociS3()
+                        .build())
+                // Reads files in subdirectories of table and partition directories
+                .withCatalog(CATALOG_WITH_RECURSIVE_DIRECTORIES, hiveCatalog(HiveCatalogPropertiesBuilder.hadoopMetastoreUri())
+                        .withCommonProperties()
+                        .put("fs.hadoop.enabled", "true")
+                        .put("hive.config.resources", "/etc/trino/hdfs-site.xml," + VIEWFS_CORE_SITE)
+                        .put("hive.recursive-directories", "true")
                         .withFlociS3()
                         .build())
                 // Writes directly to the table directory instead of staging in a temporary directory
