@@ -24,6 +24,7 @@ import org.testcontainers.trino.TrinoContainer;
 
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.util.List;
 import java.util.Map;
 
 import static io.trino.tests.product.hive.HiveCatalogPropertiesBuilder.hiveCatalog;
@@ -60,6 +61,7 @@ public class HiveViewFsEnvironment
     public static final String VIEWFS_S3_MOUNT_PATH = "/s3_data";
     public static final String CATALOG_WITHOUT_NATIVE_S3 = "hive_without_native_s3";
     public static final String CATALOG_WITH_UNREACHABLE_S3 = "hive_unreachable_s3";
+    public static final String CATALOG_WITHOUT_STAGING = "hive_without_staging";
 
     private static final String VIEWFS_CORE_SITE = "/etc/trino/viewfs-core-site.xml";
 
@@ -98,6 +100,15 @@ public class HiveViewFsEnvironment
                         .put("hive.config.resources", "/etc/trino/hdfs-site.xml," + VIEWFS_CORE_SITE)
                         .put("hive.non-managed-table-writes-enabled", "true")
                         // Native S3 serves the s3a:// mount link through the Hadoop file system bridge
+                        .withFlociS3()
+                        .build())
+                // Writes directly to the table directory instead of staging in a temporary directory
+                .withCatalog(CATALOG_WITHOUT_STAGING, hiveCatalog(HiveCatalogPropertiesBuilder.hadoopMetastoreUri())
+                        .withCommonProperties()
+                        .put("fs.hadoop.enabled", "true")
+                        .put("hive.config.resources", "/etc/trino/hdfs-site.xml," + VIEWFS_CORE_SITE)
+                        .put("hive.non-managed-table-writes-enabled", "true")
+                        .put("hive.temporary-staging-directory-enabled", "false")
                         .withFlociS3()
                         .build())
                 .withCatalog(CATALOG_WITHOUT_NATIVE_S3, hiveCatalog(HiveCatalogPropertiesBuilder.hadoopMetastoreUri())
@@ -249,6 +260,14 @@ public class HiveViewFsEnvironment
     public void deleteS3Objects(String prefix)
     {
         floci.deleteObjects(BUCKET_NAME, prefix);
+    }
+
+    /**
+     * Lists the keys in the bucket backing the ViewFS {@code s3a://} mount link.
+     */
+    public List<String> listS3Objects(String prefix)
+    {
+        return floci.listObjects(BUCKET_NAME, prefix);
     }
 
     @Override

@@ -16,12 +16,14 @@ package io.trino.tests.product.hive;
 import io.trino.testing.containers.environment.ProductTest;
 import io.trino.testing.containers.environment.RequiresEnvironment;
 import io.trino.tests.product.TestGroup;
+import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 import static io.trino.testing.containers.environment.QueryResultAssert.assertThat;
 import static io.trino.testing.containers.environment.Row.row;
 import static io.trino.tests.product.hive.HiveViewFsEnvironment.BUCKET_PREFIX;
 import static io.trino.tests.product.hive.HiveViewFsEnvironment.CATALOG_WITHOUT_NATIVE_S3;
+import static io.trino.tests.product.hive.HiveViewFsEnvironment.CATALOG_WITHOUT_STAGING;
 import static io.trino.tests.product.hive.HiveViewFsEnvironment.CATALOG_WITH_UNREACHABLE_S3;
 import static io.trino.tests.product.hive.HiveViewFsEnvironment.S3_MOUNT_PATH;
 import static io.trino.tests.product.hive.HiveViewFsEnvironment.VIEWFS_S3_MOUNT_PATH;
@@ -285,6 +287,62 @@ class TestHiveViewFsMountLinks
         }
         finally {
             env.executeHiveUpdate("DROP TABLE IF EXISTS default." + tableName);
+            env.deleteS3Objects(objectPrefix);
+        }
+    }
+
+    @Test
+    void testInsertWithoutStagingIntoTableOnViewFsMountLinkToS3(HiveViewFsEnvironment env)
+    {
+        String tableName = "test_viewfs_s3_mount_link_insert_without_staging";
+        String objectPrefix = BUCKET_PREFIX + "/" + tableName + "/";
+        env.executeHiveUpdate("DROP TABLE IF EXISTS default." + tableName);
+        env.deleteS3Objects(objectPrefix);
+        try {
+            env.executeHiveUpdate(
+                    """
+                    CREATE EXTERNAL TABLE default.%s (id INT, name STRING)
+                    ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+                    STORED AS TEXTFILE
+                    LOCATION '%s'
+                    """.formatted(tableName, env.hdfsLocation(S3_MOUNT_PATH + "/" + tableName)));
+            env.putS3Object(objectPrefix + "data.csv", "1,a\n");
+
+            // This catalog writes directly to the table directory, without a temporary staging directory
+            env.executeTrinoUpdate("INSERT INTO %s.default.%s VALUES (2, 'b')".formatted(CATALOG_WITHOUT_STAGING, tableName));
+
+            assertThat(env.executeTrino("SELECT id, name FROM hive.default." + tableName))
+                    .containsOnly(row(1, "a"), row(2, "b"));
+            Assertions.assertThat(env.listS3Objects(objectPrefix)).hasSizeGreaterThan(1);
+        }
+        finally {
+            env.executeHiveUpdate("DROP TABLE IF EXISTS default." + tableName);
+            env.deleteS3Objects(objectPrefix);
+        }
+    }
+
+    @Test
+    void testCreateTableAsSelectOnViewFsMountLinkToS3(HiveViewFsEnvironment env)
+    {
+        String tableName = "test_viewfs_s3_mount_link_ctas";
+        String objectPrefix = BUCKET_PREFIX + "/" + tableName + "/";
+        env.executeTrinoUpdate("DROP TABLE IF EXISTS hive.default." + tableName);
+        env.deleteS3Objects(objectPrefix);
+        try {
+            // CREATE TABLE AS SELECT with an external location writes directly to the target directory
+            env.executeTrinoUpdate(
+                    """
+                    CREATE TABLE hive.default.%s
+                    WITH (format = 'TEXTFILE', external_location = '%s')
+                    AS SELECT * FROM (VALUES (1, 'a'), (2, 'b')) t(id, name)
+                    """.formatted(tableName, env.hdfsLocation(S3_MOUNT_PATH + "/" + tableName)));
+
+            assertThat(env.executeTrino("SELECT id, name FROM hive.default." + tableName))
+                    .containsOnly(row(1, "a"), row(2, "b"));
+            Assertions.assertThat(env.listS3Objects(objectPrefix)).isNotEmpty();
+        }
+        finally {
+            env.executeTrinoUpdate("DROP TABLE IF EXISTS hive.default." + tableName);
             env.deleteS3Objects(objectPrefix);
         }
     }
